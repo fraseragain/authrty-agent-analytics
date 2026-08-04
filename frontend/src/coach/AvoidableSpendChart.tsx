@@ -166,7 +166,7 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
             <line
               x1={r(xAt(partialIdx))} y1={PT}
               x2={r(xAt(partialIdx))} y2={PT + PH}
-              stroke="var(--text-muted)"
+              stroke="var(--muted)"
               strokeWidth={1}
               strokeDasharray="3 3"
               opacity={0.5}

@@ -30,7 +30,7 @@ export default function CoachKpiRow({ summary }: Props) {
             {isUp ? "▲" : "▼"} {Math.abs(vs).toFixed(1)}%
           </span>
         ) : (
-          <span className="kpi-value" style={{ color: "var(--text-muted)" }}>—</span>
+          <span className="kpi-value" style={{ color: "var(--muted)" }}>—</span>
         )}
       </div>
     </div>

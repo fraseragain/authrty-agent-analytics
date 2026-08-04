@@ -67,7 +67,7 @@ export default function AvoidableBreakdown({ summary }: Props) {
         {arcs.map((a, i) => (
           <DonutArc key={i} offset={a.offset} fraction={a.fraction} color={a.color} />
         ))}
-        <text x={CX} y={CY - 6} textAnchor="middle" fontSize={11} fill="var(--text-muted)">avoidable</text>
+        <text x={CX} y={CY - 6} textAnchor="middle" fontSize={11} fill="var(--muted)">avoidable</text>
         <text x={CX} y={CY + 10} textAnchor="middle" fontSize={13} fontWeight="600" fill="var(--text)">
           {summary.avoidable_pct.toFixed(0)}%
         </text>
