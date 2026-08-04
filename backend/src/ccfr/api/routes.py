@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlite3 import Connection
 
 from ccfr import config
-from ccfr.api import analytics, repository
+from ccfr.api import analytics, coach as coach_module, repository
 from ccfr.api.deps import get_db, get_historical_pricing
 from ccfr.api.import_progress import import_progress_store
 from ccfr.settings import Settings, contributor_identity, read_settings, write_settings
@@ -47,6 +47,7 @@ from ccfr.api.schemas import (
     EventDetail,
     ImportProgressResponse,
     ImportRequest,
+    CoachAvoidableResponse,
     ImportSummaryResponse,
     LimitHitsAlertResponse,
     LimitsResponse,
@@ -677,3 +678,12 @@ def get_recent_limit_hits(
         hits=[hit_payload(h) for h in hits],
         checked_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+@router.get("/coach/avoidable", response_model=CoachAvoidableResponse)
+def get_coach_avoidable(
+    weeks: int = Query(default=12, ge=1, le=52),
+    conn: Connection = Depends(get_db),
+    historical: bool = Depends(get_historical_pricing),
+) -> CoachAvoidableResponse:
+    return coach_module.avoidable_spend(conn, weeks=weeks, historical=historical)

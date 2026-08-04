@@ -839,3 +839,34 @@ class TeamDashboardResponse(BaseModel):
     projects: list[dict[str, Any]] = Field(default_factory=list)
     tools: list[dict[str, Any]] = Field(default_factory=list)
     file_types: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CoachWeek(BaseModel):
+    week: str
+    week_label: str
+    total_usd: float = 0.0
+    efficient_usd: float = 0.0
+    loop_waste_usd: float = 0.0
+    error_retry_usd: float = 0.0
+    alerted_usd: float = 0.0
+    model_overkill_usd: float = 0.0
+    avoidable_usd: float = 0.0
+    session_count: int = 0
+    is_partial: bool = False
+    partial_days: int = 7
+
+
+class CoachSummary(BaseModel):
+    total_usd: float = 0.0
+    avoidable_usd: float = 0.0
+    avoidable_pct: float = 0.0
+    loop_waste_usd: float = 0.0
+    error_retry_usd: float = 0.0
+    alerted_usd: float = 0.0
+    model_overkill_usd: float = 0.0
+    vs_prev_period_pct: float | None = None
+
+
+class CoachAvoidableResponse(BaseModel):
+    weeks: list[CoachWeek] = Field(default_factory=list)
+    summary: CoachSummary = Field(default_factory=CoachSummary)
