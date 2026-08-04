@@ -33,6 +33,9 @@ jobs:
       - name: Run tests
         run: uv run --extra dev pytest
 
+      - name: Audit dependencies
+        run: uv run --extra dev pip-audit
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
