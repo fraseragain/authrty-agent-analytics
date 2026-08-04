@@ -48,6 +48,7 @@ from ccfr.api.schemas import (
     ImportProgressResponse,
     ImportRequest,
     CoachAvoidableResponse,
+    CoachPatternsResponse,
     ImportSummaryResponse,
     LimitHitsAlertResponse,
     LimitsResponse,
@@ -687,3 +688,11 @@ def get_coach_avoidable(
     historical: bool = Depends(get_historical_pricing),
 ) -> CoachAvoidableResponse:
     return coach_module.avoidable_spend(conn, weeks=weeks, historical=historical)
+
+
+@router.get("/coach/patterns", response_model=CoachPatternsResponse)
+def get_coach_patterns(
+    weeks: int = Query(default=12, ge=1, le=52),
+    conn: Connection = Depends(get_db),
+) -> CoachPatternsResponse:
+    return coach_module.pattern_analysis(conn, weeks=weeks)

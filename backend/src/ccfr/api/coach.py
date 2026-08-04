@@ -1,15 +1,23 @@
-"""Coach analytics: avoidable spend breakdown.
+"""Coach analytics: avoidable spend breakdown and pattern discovery.
 
-Phase 1 of the Coach page -- tracking only. Pattern-driven skill
-recommendations and skill-file generation land in a later phase.
+Skill-file generation (writing real files to a skills/agents directory) is a
+later phase with its own scope and sign-off -- findings here are display-only.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from ccfr.analysis.pricing import TokenBreakdown, cost_usd, load_price_timeline, match_price
-from ccfr.api.schemas import CoachAvoidableResponse, CoachSummary, CoachWeek
+from ccfr.api.schemas import (
+    CoachAvoidableResponse,
+    CoachFinding,
+    CoachPatternsResponse,
+    CoachSummary,
+    CoachWeek,
+)
 from ccfr.config import pricing_dir, pricing_path
 
 
@@ -287,3 +295,371 @@ def avoidable_spend(
     )
 
     return CoachAvoidableResponse(weeks=week_list, summary=summary)
+
+
+# ---------------------------------------------------------------------------
+# Pattern discovery: three independent sources, concatenated (not re-ranked
+# against each other -- session_count/score/occurrence_count aren't
+# comparable across sources).
+# ---------------------------------------------------------------------------
+
+_ERROR_PATTERNS = [
+    {
+        "match": "File has not been read yet",
+        "title": "Edit-before-read errors",
+        "body": "Claude attempted to edit or write files without reading them first in {sessions} sessions ({occurrences} times). This is a consistent behaviour — each instance causes an immediate tool error.",
+        "recommendation": "Add 'always Read a file before editing it' to CLAUDE.md. A PostToolUse hook on Edit/Write could enforce this automatically.",
+        "severity": "warning",
+        "skill_key": None,
+    },
+    {
+        "match": "Upgrade to GitHub Pro",
+        "title": "GitHub private repo access failures",
+        "body": "The GitHub MCP returned 'Upgrade to GitHub Pro' in {sessions} sessions ({occurrences} times). It can't access private repositories without proper authentication.",
+        "recommendation": "Use `gh auth login` and the gh CLI instead of the GitHub MCP for private repos. Never paste a PAT into conversation — add this to CLAUDE.md.",
+        "severity": "warning",
+        "skill_key": "gh-context",
+    },
+    {
+        "match": "WebFetch has been denied",
+        "title": "WebFetch permission retries",
+        "body": "Claude kept retrying WebFetch after it was denied — {occurrences} times across {sessions} sessions. Each retry is a wasted tool call that counts toward error retry cost.",
+        "recommendation": "Pre-authorise WebFetch in your permission settings, or instruct Claude to stop after a denial rather than retry.",
+        "severity": "warning",
+        "skill_key": None,
+    },
+    {
+        "match": "WebSearch has been denied",
+        "title": "WebSearch permission retries",
+        "body": "Claude kept retrying WebSearch after it was denied — {occurrences} times across {sessions} sessions.",
+        "recommendation": "Pre-authorise WebSearch or set it as always-allowed to avoid repeated prompts.",
+        "severity": "warning",
+        "skill_key": "research-agent",
+    },
+    {
+        "match": "doesn't want to proceed",
+        "title": "User-rejected tool calls",
+        "body": "You rejected tool permission prompts {occurrences} times across {sessions} sessions. Each rejection costs a round-trip and interrupts the session.",
+        "recommendation": "Review which tools you regularly allow and add them to the pre-authorised list to reduce interruptions.",
+        "severity": "info",
+        "skill_key": None,
+    },
+    {
+        "match": "File does not exist",
+        "title": "Phantom file references",
+        "body": "Claude referenced file paths that don't exist in {sessions} sessions ({occurrences} times). This usually signals hallucinated or stale paths.",
+        "recommendation": "Add 'verify paths with ls or test -e before referencing them' to CLAUDE.md.",
+        "severity": "warning",
+        "skill_key": None,
+    },
+    {
+        "match": "failed to resolve git reference",
+        "title": "Git/MCP reference failures",
+        "body": "Git or MCP failed to resolve repository references in {sessions} sessions ({occurrences} times).",
+        "recommendation": "Check MCP git configuration — the MCP may be pointing to a repo it can't reach from the container.",
+        "severity": "info",
+        "skill_key": None,
+    },
+    {
+        "match": "Tool permission stream closed",
+        "title": "Permission stream timeouts",
+        "body": "Tool permission requests timed out before getting a response in {sessions} sessions ({occurrences} times).",
+        "recommendation": "Check for connectivity issues with the permission service, or pre-authorise frequently used tools.",
+        "severity": "warning",
+        "skill_key": None,
+    },
+]
+
+
+def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFinding]:
+    """Error-signature matching plus coarse session/project heuristics.
+
+    Ported from the old (deleted, dangling-commit-recoverable) Efficiency
+    dashboard branch's pattern_analysis(). Unlike the other two sources, this
+    one works in text/count space, not sequence or risk-score space.
+    """
+    findings: list[CoachFinding] = []
+
+    # --- error pattern clustering: known error signatures in tool_results ---
+    err_preview_rows = conn.execute(
+        """
+        SELECT output_preview,
+               COUNT(DISTINCT session_id) AS session_count,
+               COUNT(*) AS occurrence_count
+        FROM tool_results
+        WHERE is_error = 1
+          AND output_preview IS NOT NULL
+          AND length(output_preview) > 5
+          AND session_id IN (SELECT id FROM sessions WHERE first_ts >= ?)
+        GROUP BY output_preview
+        """,
+        (cutoff,),
+    ).fetchall()
+
+    for pat in _ERROR_PATTERNS:
+        rows = [r for r in err_preview_rows if pat["match"] in (r["output_preview"] or "")]
+        if not rows:
+            continue
+        session_count = sum(r["session_count"] for r in rows)
+        occurrence_count = sum(r["occurrence_count"] for r in rows)
+        if session_count < 2:
+            continue
+        findings.append(CoachFinding(
+            title=pat["title"],
+            body=pat["body"].format(sessions=session_count, occurrences=occurrence_count),
+            recommendation=pat["recommendation"],
+            metric=f"{occurrence_count}× across {session_count} sessions",
+            severity=pat["severity"],
+            session_count=session_count,
+            occurrence_count=occurrence_count,
+            skill_key=pat.get("skill_key"),
+            source="heuristic",
+        ))
+
+    findings.sort(key=lambda f: f.occurrence_count, reverse=True)
+
+    # --- error concentration: a small minority of sessions holding most errors ---
+    error_rows = conn.execute(
+        """
+        SELECT session_id, COUNT(*) AS err_count
+        FROM tool_results
+        WHERE is_error = 1
+          AND session_id IN (SELECT id FROM sessions WHERE first_ts >= ?)
+        GROUP BY session_id
+        ORDER BY err_count DESC
+        """,
+        (cutoff,),
+    ).fetchall()
+
+    if error_rows:
+        total_errors = sum(r["err_count"] for r in error_rows)
+        running = 0
+        top_n = 0
+        for r in error_rows:
+            running += r["err_count"]
+            top_n += 1
+            if running / total_errors >= 0.8:
+                break
+        # Only surface if a small minority of sessions dominates.
+        if top_n <= max(1, len(error_rows) // 3) and top_n <= 5:
+            pct = int(running / total_errors * 100)
+            findings.append(CoachFinding(
+                title="Error concentration",
+                body=(
+                    f"Just {top_n} session{'s' if top_n > 1 else ''} account for {pct}% "
+                    f"of all {total_errors} tool errors. "
+                    f"These sessions had {running} errors between them — "
+                    f"the rest of your sessions are relatively clean."
+                ),
+                recommendation="Investigate these specific sessions to find the root cause. A single fix could eliminate most of your error retry cost.",
+                metric=f"{top_n} sessions · {pct}% of errors",
+                severity="warning",
+                session_count=top_n,
+                occurrence_count=running,
+                source="heuristic",
+            ))
+
+    # --- deep loop sessions ---
+    deep = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM session_stats ss
+        JOIN sessions s ON s.id = ss.session_id
+        WHERE ss.max_repeat >= 8 AND s.first_ts >= ?
+        """,
+        (cutoff,),
+    ).fetchone()
+
+    if deep and int(deep["n"]) >= 2:
+        n = int(deep["n"])
+        findings.append(CoachFinding(
+            title="Deep loop sessions",
+            body=(
+                f"{n} sessions repeated the same tool call 8 or more times consecutively. "
+                f"These are the primary driver of loop waste — each run past the first is a wasted token spend."
+            ),
+            recommendation="A bash-verifier subagent that checks the output after each Bash call would break these loops early.",
+            metric=f"{n} sessions",
+            severity="warning",
+            session_count=n,
+            skill_key="bash-verifier",
+            source="heuristic",
+        ))
+
+    # --- project efficiency hotspot ---
+    proj_rows = conn.execute(
+        """
+        SELECT s.cwd,
+               COUNT(DISTINCT s.id) AS session_count,
+               SUM(ss.loop_count) AS total_loops,
+               SUM(ss.tool_call_count) AS total_tools
+        FROM sessions s
+        JOIN session_stats ss ON ss.session_id = s.id
+        WHERE s.first_ts >= ? AND s.cwd IS NOT NULL
+        GROUP BY s.cwd
+        HAVING session_count >= 2
+        ORDER BY session_count DESC
+        """,
+        (cutoff,),
+    ).fetchall()
+
+    if len(proj_rows) >= 2:
+        def _proj_name(cwd: str) -> str:
+            return os.path.basename(cwd.rstrip("/")) or cwd
+
+        def _loop_rate(r: sqlite3.Row) -> float:
+            return r["total_loops"] / max(r["total_tools"], 1)
+
+        ranked = sorted(proj_rows, key=_loop_rate, reverse=True)
+        worst = ranked[0]
+        best = ranked[-1]
+        worst_rate = _loop_rate(worst)
+        best_rate = _loop_rate(best)
+
+        if worst_rate > best_rate * 2 and worst_rate > 0.02:
+            findings.append(CoachFinding(
+                title="Project loop hotspot",
+                body=(
+                    f'"{_proj_name(worst["cwd"])}" has a loop rate of {worst_rate*100:.1f}% '
+                    f'across {int(worst["session_count"])} sessions — '
+                    f'{worst_rate / max(best_rate, 0.001):.1f}× higher than '
+                    f'"{_proj_name(best["cwd"])}" ({best_rate*100:.1f}%). '
+                    f"This project is driving a disproportionate share of loop waste."
+                ),
+                recommendation="Look for a repeating pattern specific to this project — a failing test, a tool that always needs retrying, or a prompt that reliably causes loops.",
+                metric=f'{_proj_name(worst["cwd"])} · {worst_rate*100:.1f}% loop rate',
+                severity="info",
+                session_count=int(worst["session_count"]),
+                skill_key="bash-verifier",
+                source="heuristic",
+            ))
+
+    return findings
+
+
+def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int = 5) -> list[CoachFinding]:
+    """Corpus-wide recurring risk findings.
+
+    Reuses analysis/risk_patterns.py's risk_findings table -- already
+    populated on every import (rebuild_risk_patterns(), called from
+    importer.py) and, until now, only ever queried per-session.
+    """
+    rows = conn.execute(
+        """
+        SELECT rf.category, rf.title,
+               COUNT(DISTINCT rf.session_id) AS session_count,
+               COUNT(*) AS occurrence_count,
+               MAX(CASE rf.severity WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END) AS severity_rank
+        FROM risk_findings rf
+        JOIN sessions s ON s.id = rf.session_id
+        WHERE s.first_ts >= ?
+        GROUP BY rf.category, rf.title
+        HAVING session_count >= 2
+        ORDER BY session_count DESC, severity_rank DESC
+        LIMIT ?
+        """,
+        (cutoff, limit),
+    ).fetchall()
+
+    findings: list[CoachFinding] = []
+    for row in rows:
+        session_count = int(row["session_count"])
+        occurrence_count = int(row["occurrence_count"])
+        category = (row["category"] or "risk").replace("_", " ")
+        title = row["title"] or "Recurring finding"
+        findings.append(CoachFinding(
+            title=f"Recurring finding: {category.title()} · {title}",
+            body=(
+                f"This risk finding appears in {session_count} sessions "
+                f"({occurrence_count} times) over the selected window."
+            ),
+            recommendation="Review these sessions for a shared root cause — a flaky test, a tool that regularly needs retrying, or a prompt pattern that reliably triggers this.",
+            metric=f"{session_count} sessions",
+            severity="warning" if int(row["severity_rank"]) >= 2 else "info",
+            session_count=session_count,
+            occurrence_count=occurrence_count,
+            source="risk_patterns",
+        ))
+    return findings
+
+
+def _workflow_findings(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    *,
+    n: int = 3,
+    min_sessions: int = 3,
+    limit: int = 3,
+) -> list[CoachFinding]:
+    """Tool-name n-grams that recur across multiple *different* sessions.
+
+    None of the other two sources look for repeatable workflows -- the thing
+    actually worth turning into a skill. Each session counts once per gram
+    (deduped) so one busy session can't inflate a gram's session-count.
+    """
+    rows = conn.execute(
+        """
+        SELECT tc.session_id, tc.tool_name
+        FROM tool_calls tc
+        JOIN events e ON e.id = tc.event_id
+        JOIN sessions s ON s.id = tc.session_id
+        WHERE s.first_ts >= ? AND tc.tool_name IS NOT NULL
+        ORDER BY tc.session_id, e.id
+        """,
+        (cutoff,),
+    ).fetchall()
+
+    session_sequences: dict[int, list[str]] = defaultdict(list)
+    for row in rows:
+        session_sequences[int(row["session_id"])].append(row["tool_name"])
+
+    gram_sessions: dict[tuple[str, ...], set[int]] = defaultdict(set)
+    for session_id, sequence in session_sequences.items():
+        seen_this_session: set[tuple[str, ...]] = set()
+        for i in range(len(sequence) - n + 1):
+            gram = tuple(sequence[i:i + n])
+            if gram in seen_this_session:
+                continue
+            seen_this_session.add(gram)
+            gram_sessions[gram].add(session_id)
+
+    ranked = sorted(gram_sessions.items(), key=lambda kv: len(kv[1]), reverse=True)
+
+    findings: list[CoachFinding] = []
+    for gram, session_ids in ranked:
+        if len(session_ids) < min_sessions:
+            break  # sorted descending, so nothing after this qualifies either
+        label = " → ".join(gram)
+        findings.append(CoachFinding(
+            title=f"Repeated workflow: {label}",
+            body=f"This exact sequence of tool calls appears in {len(session_ids)} different sessions.",
+            recommendation="Consider a skill or agent that automates this sequence end-to-end.",
+            metric=f"{len(session_ids)} sessions",
+            severity="info",
+            session_count=len(session_ids),
+            occurrence_count=len(session_ids),
+            source="workflow",
+        ))
+        if len(findings) >= limit:
+            break
+    return findings
+
+
+def pattern_analysis(conn: sqlite3.Connection, *, weeks: int = 12) -> CoachPatternsResponse:
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+    total_session_count = conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE first_ts >= ?", (cutoff,)
+    ).fetchone()[0]
+
+    findings = [
+        *_heuristic_findings(conn, cutoff),
+        *_risk_pattern_findings(conn, cutoff),
+        *_workflow_findings(conn, cutoff),
+    ]
+
+    return CoachPatternsResponse(
+        findings=findings,
+        total_session_count=total_session_count,
+        weeks=weeks,
+    )

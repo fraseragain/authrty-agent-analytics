@@ -870,3 +870,21 @@ class CoachSummary(BaseModel):
 class CoachAvoidableResponse(BaseModel):
     weeks: list[CoachWeek] = Field(default_factory=list)
     summary: CoachSummary = Field(default_factory=CoachSummary)
+
+
+class CoachFinding(BaseModel):
+    title: str
+    body: str
+    recommendation: str
+    metric: str
+    severity: str  # "warning" | "info"
+    session_count: int = 0
+    occurrence_count: int = 0
+    skill_key: str | None = None
+    source: str  # "risk_patterns" | "heuristic" | "workflow"
+
+
+class CoachPatternsResponse(BaseModel):
+    findings: list[CoachFinding] = Field(default_factory=list)
+    total_session_count: int = 0
+    weeks: int = 12
