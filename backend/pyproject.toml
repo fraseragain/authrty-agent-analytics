@@ -40,6 +40,7 @@ cya = "ccfr.cli:main"
 dev = [
     "pytest>=8.2.0",
     "httpx>=0.27.0",
+    "pip-audit>=2.7.0",
 ]
 
 [build-system]
