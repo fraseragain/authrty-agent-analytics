@@ -6,7 +6,11 @@ ENV CCFR_DB_PATH=/app/data/ccfr.sqlite3
 ENV CCFR_IMPORT_ROOT=/imports
 ENV PYTHONPATH=/app/backend/src
 COPY backend ./backend
-RUN pip install --no-cache-dir ./backend
+# Uninstall the build-time pip/setuptools/wheel toolchain afterwards: the app
+# doesn't need it at runtime, and setuptools vendors its own copies of
+# jaraco.context and wheel that trail the base image's CVE fixes.
+RUN pip install --no-cache-dir ./backend && \
+    python -m pip uninstall --yes pip setuptools wheel
 # Data assets live at the repo root; the image mirrors the checkout layout, so
 # the defaults resolve to /app/pricing.csv and /app/demo/claude-export ("Load
 # demo data" / `serve --demo`). Copied after the pip install so data edits
