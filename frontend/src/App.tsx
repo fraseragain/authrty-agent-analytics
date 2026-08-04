@@ -6,6 +6,7 @@ import ImportPage from "./pages/ImportPage";
 import TriageBoard from "./triage/TriageBoard";
 import SessionWorkspace from "./pages/SessionWorkspace";
 import CostAnalyticsPage from "./analytics/CostAnalyticsPage";
+import CoachPage from "./coach/CoachPage";
 import DiscoverPage from "./discover/DiscoverPage";
 import TeamOverview from "./team/TeamOverview";
 import TeamBundleExport from "./team/TeamBundleExport";
@@ -148,6 +149,7 @@ function App() {
             historical={historicalPricing}
           />
         )}
+        {view === "coach" && scope === "local" && <CoachPage />}
         {view === "discover" && scope === "local" && (
           <DiscoverPage
             projects={projects.data ?? []}

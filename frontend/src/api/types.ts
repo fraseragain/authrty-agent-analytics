@@ -871,3 +871,43 @@ export interface TeamDashboard {
   file_types?: { ext: string; count: number; session_count: number }[];
   over_time?: Array<{ date: string; session_count: number; tokens: number }>;
 }
+
+export interface CoachWeek {
+  week: string;
+  week_label: string;
+  total_usd: number;
+  efficient_usd: number;
+  loop_waste_usd: number;
+  error_retry_usd: number;
+  alerted_usd: number;
+  model_overkill_usd: number;
+  avoidable_usd: number;
+  session_count: number;
+  is_partial: boolean;
+  partial_days: number;
+}
+
+export interface CoachSummary {
+  total_usd: number;
+  avoidable_usd: number;
+  avoidable_pct: number;
+  loop_waste_usd: number;
+  error_retry_usd: number;
+  alerted_usd: number;
+  model_overkill_usd: number;
+  vs_prev_period_pct: number | null;
+}
+
+export interface CoachAvoidableResponse {
+  weeks: CoachWeek[];
+  summary: CoachSummary;
+}
+
+// Not yet produced by the backend (skill detection is a later phase) --
+// kept here so AvoidableSpendChart's markers prop doesn't need touching
+// again once it is.
+export interface CoachSkillMarker {
+  skill_key: string;
+  detected_at: string;
+  week: string;
+}

@@ -10,6 +10,7 @@ import type {
   DiscoveredProject,
   EventDetail,
   ImportProgress,
+  CoachAvoidableResponse,
   ImportSummary,
   LimitHitsAlertResponse,
   LimitsResponse,
@@ -258,6 +259,10 @@ export function getLimits() {
 export function getRecentLimitHits(since?: string) {
   const query = since ? `?since=${encodeURIComponent(since)}` : "";
   return request<LimitHitsAlertResponse>(`/alerts/limit-hits${query}`);
+}
+
+export function getCoachAvoidable(weeks = 12) {
+  return request<CoachAvoidableResponse>(`/coach/avoidable?weeks=${weeks}`);
 }
 
 export function getSettings() {

@@ -55,6 +55,13 @@ vi.mock("./api/client", () => ({
     event_count: 0, subagent_count: 0, memory_count: 0, persisted_output_count: 0,
   })),
   getRecentLimitHits: vi.fn(async () => ({ hits: [], checked_at: new Date().toISOString() })),
+  getCoachAvoidable: vi.fn(async () => ({
+    weeks: [],
+    summary: {
+      total_usd: 0, avoidable_usd: 0, avoidable_pct: 0, loop_waste_usd: 0,
+      error_retry_usd: 0, alerted_usd: 0, model_overkill_usd: 0, vs_prev_period_pct: null,
+    },
+  })),
   getCostAnalytics: vi.fn(async () => ({
     meta: { available: false, unpriced_models: [], total_usd: 0, total_tokens: 0,
       available_projects: [], available_models: [], bucket: "day" },
