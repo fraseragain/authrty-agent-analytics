@@ -911,3 +911,22 @@ export interface CoachSkillMarker {
   detected_at: string;
   week: string;
 }
+
+export interface CoachFinding {
+  title: string;
+  body: string;
+  recommendation: string;
+  metric: string;
+  severity: string; // "warning" | "info"
+  session_count: number;
+  occurrence_count: number;
+  skill_key: string | null;
+  source: string; // "risk_patterns" | "heuristic" | "workflow"
+  last_seen_at: string | null;
+}
+
+export interface CoachPatternsResponse {
+  findings: CoachFinding[];
+  total_session_count: number;
+  weeks: number;
+}

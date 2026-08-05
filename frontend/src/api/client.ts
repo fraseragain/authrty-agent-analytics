@@ -11,6 +11,7 @@ import type {
   EventDetail,
   ImportProgress,
   CoachAvoidableResponse,
+  CoachPatternsResponse,
   ImportSummary,
   LimitHitsAlertResponse,
   LimitsResponse,
@@ -263,6 +264,10 @@ export function getRecentLimitHits(since?: string) {
 
 export function getCoachAvoidable(weeks = 12) {
   return request<CoachAvoidableResponse>(`/coach/avoidable?weeks=${weeks}`);
+}
+
+export function getCoachPatterns(weeks = 12) {
+  return request<CoachPatternsResponse>(`/coach/patterns?weeks=${weeks}`);
 }
 
 export function getSettings() {

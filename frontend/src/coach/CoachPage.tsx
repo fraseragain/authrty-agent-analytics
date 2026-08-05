@@ -1,14 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { getCoachAvoidable } from "../api/client";
+import { getCoachAvoidable, getCoachPatterns } from "../api/client";
 import CoachKpiRow from "./CoachKpiRow";
 import AvoidableSpendChart from "./AvoidableSpendChart";
 import AvoidableBreakdown from "./AvoidableBreakdown";
+import PatternDiscovery from "./PatternDiscovery";
 import LoadingBar from "../components/LoadingBar";
 
 export default function CoachPage() {
   const avoidable = useQuery({
     queryKey: ["coach-avoidable"],
     queryFn: () => getCoachAvoidable(12),
+  });
+  const patterns = useQuery({
+    queryKey: ["coach-patterns"],
+    queryFn: () => getCoachPatterns(12),
   });
 
   return (
@@ -28,21 +33,28 @@ export default function CoachPage() {
       )}
 
       {avoidable.data && (
-        <section className="coach-tile">
-          <h2>Spend over time</h2>
-          <AvoidableSpendChart
-            weeks={avoidable.data.weeks}
-            markers={[]}
-          />
-        </section>
+        <div className="coach-two-col">
+          <section className="coach-tile">
+            <h2>Spend over time</h2>
+            <AvoidableSpendChart
+              weeks={avoidable.data.weeks}
+              markers={[]}
+            />
+          </section>
+
+          <section className="coach-tile">
+            <h2>Avoidable spend breakdown</h2>
+            <AvoidableBreakdown summary={avoidable.data.summary} />
+          </section>
+        </div>
       )}
 
-      {avoidable.data && (
-        <section className="coach-tile">
-          <h2>Avoidable spend breakdown</h2>
-          <AvoidableBreakdown summary={avoidable.data.summary} />
-        </section>
-      )}
+      <section className="coach-tile">
+        <h2>Pattern discoveries</h2>
+        {patterns.isLoading && <div className="empty-state"><LoadingBar caption="Loading pattern discoveries…" /></div>}
+        {patterns.isError && <div className="empty-state">Failed to load pattern discoveries.</div>}
+        {patterns.data && <PatternDiscovery data={patterns.data} />}
+      </section>
     </div>
   );
 }
