@@ -701,8 +701,13 @@ def get_coach_patterns(
 
 
 @router.post("/coach/actions/{kind}/{key}", response_model=CoachActionResult)
-def post_coach_action(kind: str, key: str, body: CoachActionRequest = CoachActionRequest()) -> CoachActionResult:
+def post_coach_action(
+    kind: str,
+    key: str,
+    body: CoachActionRequest = CoachActionRequest(),
+    conn: Connection = Depends(get_db),
+) -> CoachActionResult:
     try:
-        return coach_module.apply_action(kind, key, recommendation=body.recommendation)
+        return coach_module.apply_action(kind, key, recommendation=body.recommendation, conn=conn)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

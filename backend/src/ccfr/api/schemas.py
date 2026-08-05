@@ -867,9 +867,18 @@ class CoachSummary(BaseModel):
     vs_prev_period_pct: float | None = None
 
 
+class CoachActionMarker(BaseModel):
+    kind: str
+    key: str
+    label: str
+    applied_at: str
+    week: str  # YYYY-MM-DD bucket, matches CoachWeek.week for chart alignment
+
+
 class CoachAvoidableResponse(BaseModel):
     weeks: list[CoachWeek] = Field(default_factory=list)
     summary: CoachSummary = Field(default_factory=CoachSummary)
+    markers: list[CoachActionMarker] = Field(default_factory=list)
 
 
 class CoachAction(BaseModel):

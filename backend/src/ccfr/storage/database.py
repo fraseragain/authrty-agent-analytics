@@ -279,6 +279,16 @@ CREATE INDEX IF NOT EXISTS idx_risk_findings_session ON risk_findings(session_id
 CREATE INDEX IF NOT EXISTS idx_risk_findings_category ON risk_findings(category);
 CREATE INDEX IF NOT EXISTS idx_risk_findings_score ON risk_findings(score);
 
+CREATE TABLE IF NOT EXISTS coach_applied_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_coach_applied_actions_applied_at ON coach_applied_actions(applied_at);
+
 CREATE TABLE IF NOT EXISTS team_bundles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bundle_id TEXT NOT NULL UNIQUE,

@@ -14,6 +14,14 @@ from ccfr.storage import init_db
 from tests.test_coach import _add_message, _add_session, _now
 
 
+@pytest.fixture()
+def bare_conn() -> sqlite3.Connection:
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    init_db(c)
+    return c
+
+
 # ---------------------------------------------------------------------------
 # create_agent
 # ---------------------------------------------------------------------------
@@ -234,6 +242,59 @@ def test_apply_action_rejects_unknown_permission_tool() -> None:
 
 
 # ---------------------------------------------------------------------------
+# applied-action markers (avoidable-spend chart impact tracking)
+# ---------------------------------------------------------------------------
+
+
+def test_log_applied_action_inserts_a_row(bare_conn: sqlite3.Connection) -> None:
+    applied_at = coach_module._log_applied_action(
+        bare_conn, kind="create_agent", key="bash-verifier", label="Create bash-verifier agent"
+    )
+
+    row = bare_conn.execute("SELECT kind, key, label, applied_at FROM coach_applied_actions").fetchone()
+    assert row["kind"] == "create_agent"
+    assert row["key"] == "bash-verifier"
+    assert row["label"] == "Create bash-verifier agent"
+    assert row["applied_at"] == applied_at
+
+
+def test_load_action_markers_buckets_by_day(bare_conn: sqlite3.Connection) -> None:
+    coach_module._log_applied_action(bare_conn, kind="claude_md", key="finding-a", label="Add to CLAUDE.md")
+    bare_conn.execute(
+        "UPDATE coach_applied_actions SET applied_at = '2026-06-15T14:32:00+00:00' WHERE key = 'finding-a'"
+    )
+    bare_conn.commit()
+
+    markers = coach_module._load_action_markers(bare_conn, start_date="2026-06-01", end_date="2026-06-30")
+
+    assert len(markers) == 1
+    assert markers[0].week == "2026-06-15"
+    assert markers[0].applied_at == "2026-06-15T14:32:00+00:00"
+    assert markers[0].label == "Add to CLAUDE.md"
+
+
+def test_load_action_markers_excludes_outside_window(bare_conn: sqlite3.Connection) -> None:
+    coach_module._log_applied_action(bare_conn, kind="claude_md", key="old", label="Add to CLAUDE.md")
+    bare_conn.execute("UPDATE coach_applied_actions SET applied_at = '2026-01-01T00:00:00+00:00' WHERE key = 'old'")
+    bare_conn.commit()
+
+    markers = coach_module._load_action_markers(bare_conn, start_date="2026-06-01", end_date="2026-06-30")
+
+    assert markers == []
+
+
+def test_apply_action_with_conn_logs_a_marker(bare_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(coach_module, "claude_md_path", lambda: tmp_path / "CLAUDE.md")
+
+    coach_module.apply_action("claude_md", "deep-loop-sessions", recommendation="Do the thing.", conn=bare_conn)
+
+    row = bare_conn.execute("SELECT kind, key, label FROM coach_applied_actions").fetchone()
+    assert row["kind"] == "claude_md"
+    assert row["key"] == "deep-loop-sessions"
+    assert row["label"] == coach_module._action_label("claude_md", "deep-loop-sessions")
+
+
+# ---------------------------------------------------------------------------
 # POST /api/coach/actions/{kind}/{key}
 # ---------------------------------------------------------------------------
 
@@ -318,6 +379,20 @@ def test_post_coach_action_permission_allow(client: TestClient) -> None:
 def test_post_coach_action_unknown_kind_is_400(client: TestClient) -> None:
     resp = client.post("/api/coach/actions/hooks/some-key")
     assert resp.status_code == 400
+
+
+def test_post_coach_action_then_avoidable_shows_a_marker(client: TestClient) -> None:
+    resp = client.post("/api/coach/actions/create_agent/bash-verifier")
+    assert resp.status_code == 200
+
+    avoidable = client.get("/api/coach/avoidable")
+    assert avoidable.status_code == 200
+    markers = avoidable.json()["markers"]
+    assert len(markers) == 1
+    assert markers[0]["kind"] == "create_agent"
+    assert markers[0]["key"] == "bash-verifier"
+    assert markers[0]["label"] == "Create bash-verifier agent"
+    assert markers[0]["week"] == markers[0]["applied_at"][:10]
 
 
 def test_coach_patterns_findings_carry_actions(client: TestClient) -> None:

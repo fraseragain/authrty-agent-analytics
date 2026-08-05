@@ -17,6 +17,7 @@ from pathlib import Path
 from ccfr.analysis.pricing import TokenBreakdown, cost_usd, load_price_timeline, match_price
 from ccfr.api.schemas import (
     CoachAction,
+    CoachActionMarker,
     CoachActionResult,
     CoachAvoidableResponse,
     CoachFinding,
@@ -307,7 +308,9 @@ def avoidable_spend(
         vs_prev_period_pct=vs_prev,
     )
 
-    return CoachAvoidableResponse(weeks=week_list, summary=summary)
+    markers = _load_action_markers(conn, start_date=start_date, end_date=today_str)
+
+    return CoachAvoidableResponse(weeks=week_list, summary=summary, markers=markers)
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +587,21 @@ def apply_permission_allow(tool: str, path: Path | None = None) -> None:
         _write_text_atomic(settings_path, json.dumps(data, indent=2) + "\n")
 
 
+def _action_label(kind: str, key: str) -> str:
+    """Single source for an action's display label, keyed only off kind+key.
+
+    Shared by _build_actions() (what the button says) and apply_action()
+    (what gets logged as applied) so the two can never drift apart.
+    """
+    if kind == "claude_md":
+        return "Add to CLAUDE.md"
+    if kind == "create_agent":
+        return f"Create {key} agent"
+    if kind == "permission_allow":
+        return f"Allow {key} without prompting"
+    return f"{kind}: {key}"
+
+
 def _build_actions(
     finding_key: str,
     *,
@@ -604,7 +622,7 @@ def _build_actions(
         CoachAction(
             kind="claude_md",
             key=finding_key,
-            label="Add to CLAUDE.md",
+            label=_action_label("claude_md", finding_key),
             applied=_claude_md_marker_present(finding_key),
         ),
     ]
@@ -613,7 +631,7 @@ def _build_actions(
         actions.append(CoachAction(
             kind="create_agent",
             key=skill_key,
-            label=f"Create {skill_key} agent",
+            label=_action_label("create_agent", skill_key),
             applied=(agents_dir() / f"{skill_key}.md").exists(),
         ))
 
@@ -623,7 +641,7 @@ def _build_actions(
             actions.append(CoachAction(
                 kind="permission_allow",
                 key=tool,
-                label=f"Allow {tool} without prompting",
+                label=_action_label("permission_allow", tool),
                 applied=_tool_in_allow_list(tool),
             ))
 
@@ -962,32 +980,85 @@ def _workflow_findings(
     return findings
 
 
-def apply_action(kind: str, key: str, *, recommendation: str | None = None) -> CoachActionResult:
+def _log_applied_action(conn: sqlite3.Connection, *, kind: str, key: str, label: str) -> str:
+    """Record that an action was applied, for the avoidable-spend chart's markers.
+
+    Returns the applied_at timestamp. Never touches ~/.claude -- this is
+    purely the app's own history of when *it* made a change, so the chart
+    can show impact over time.
+    """
+    applied_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?)",
+        (kind, key, label, applied_at),
+    )
+    conn.commit()
+    return applied_at
+
+
+def _load_action_markers(conn: sqlite3.Connection, *, start_date: str, end_date: str) -> list[CoachActionMarker]:
+    """Applied-action history within [start_date, end_date], bucketed to the
+    day for alignment with CoachWeek.week (avoidable_spend is daily-bucketed
+    despite the name -- see its docstring)."""
+    rows = conn.execute(
+        """
+        SELECT kind, key, label, applied_at
+        FROM coach_applied_actions
+        WHERE date(applied_at) >= ? AND date(applied_at) <= ?
+        ORDER BY applied_at
+        """,
+        (start_date, end_date),
+    ).fetchall()
+    return [
+        CoachActionMarker(
+            kind=row["kind"],
+            key=row["key"],
+            label=row["label"],
+            applied_at=row["applied_at"],
+            week=row["applied_at"][:10],
+        )
+        for row in rows
+    ]
+
+
+def apply_action(
+    kind: str,
+    key: str,
+    *,
+    recommendation: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> CoachActionResult:
     """Dispatch a POST /api/coach/actions/{kind}/{key} request to the right apply_*.
 
     `recommendation` is only required for kind="claude_md" -- the route has no
     other way to recover the finding's recommendation text, since actions are
-    derived on the fly rather than looked up from a stored table.
+    derived on the fly rather than looked up from a stored table. `conn`, when
+    given, logs the application for the avoidable-spend chart's markers.
     """
     if kind == "claude_md":
         if not recommendation:
             raise ValueError("recommendation is required for claude_md actions")
         apply_claude_md_snippet(key, recommendation)
         host_path = str(claude_home_display() / "CLAUDE.md")
-        return CoachActionResult(applied=True, detail=f"Added to {claude_md_path()}", host_path=host_path)
-    if kind == "create_agent":
+        detail = f"Added to {claude_md_path()}"
+    elif kind == "create_agent":
         if key not in _AGENT_TEMPLATES:
             raise ValueError(f"Unknown agent template: {key}")
         dest = create_agent(key, agents_dir())
         host_path = str(claude_home_display() / "agents" / f"{key}.md")
-        return CoachActionResult(applied=True, detail=f"Created {dest}", host_path=host_path)
-    if kind == "permission_allow":
+        detail = f"Created {dest}"
+    elif kind == "permission_allow":
         if key not in _KNOWN_PERMISSION_TOOLS:
             raise ValueError(f"Unknown permission tool: {key}")
         apply_permission_allow(key)
         host_path = str(claude_home_display() / "settings.json")
-        return CoachActionResult(applied=True, detail=f"Added {key} to permissions.allow", host_path=host_path)
-    raise ValueError(f"Unknown action kind: {kind}")
+        detail = f"Added {key} to permissions.allow"
+    else:
+        raise ValueError(f"Unknown action kind: {kind}")
+
+    if conn is not None:
+        _log_applied_action(conn, kind=kind, key=key, label=_action_label(kind, key))
+    return CoachActionResult(applied=True, detail=detail, host_path=host_path)
 
 
 def pattern_analysis(conn: sqlite3.Connection, *, weeks: int = 12) -> CoachPatternsResponse:
