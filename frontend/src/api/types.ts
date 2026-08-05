@@ -912,6 +912,13 @@ export interface CoachSkillMarker {
   week: string;
 }
 
+export interface CoachAction {
+  kind: string; // "claude_md" | "create_agent" | "permission_allow"
+  key: string;
+  label: string;
+  applied: boolean;
+}
+
 export interface CoachFinding {
   title: string;
   body: string;
@@ -923,10 +930,16 @@ export interface CoachFinding {
   skill_key: string | null;
   source: string; // "risk_patterns" | "heuristic" | "workflow"
   last_seen_at: string | null;
+  actions: CoachAction[];
 }
 
 export interface CoachPatternsResponse {
   findings: CoachFinding[];
   total_session_count: number;
   weeks: number;
+}
+
+export interface CoachActionResult {
+  applied: boolean;
+  detail: string;
 }

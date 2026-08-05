@@ -1,6 +1,8 @@
 import React from "react";
-import type { CoachFinding, CoachPatternsResponse } from "../api/types";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { CoachAction, CoachFinding, CoachPatternsResponse } from "../api/types";
 import { WARNING_COLOR, INFO_COLOR } from "../analytics/chartGeometry";
+import { applyCoachAction } from "../api/client";
 
 interface Props {
   data: CoachPatternsResponse;
@@ -22,6 +24,18 @@ function FindingCard({ finding }: { finding: CoachFinding }) {
   const isWarning = finding.severity === "warning";
   const accentColor = isWarning ? WARNING_COLOR : INFO_COLOR;
   const icon = isWarning ? "⚠" : "→";
+  const queryClient = useQueryClient();
+  const [pendingKey, setPendingKey] = React.useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: (action: CoachAction) =>
+      applyCoachAction(action.kind, action.key, action.kind === "claude_md" ? finding.recommendation : undefined),
+    onMutate: (action) => setPendingKey(`${action.kind}:${action.key}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["coach-patterns"] });
+    },
+    onSettled: () => setPendingKey(null),
+  });
 
   return (
     <div className="pd-card" style={{ borderLeftColor: accentColor }}>
@@ -41,6 +55,25 @@ function FindingCard({ finding }: { finding: CoachFinding }) {
           <span className="pd-card-rec-label">Fix: </span>
           {finding.recommendation}
         </p>
+        {finding.actions.length > 0 && (
+          <div className="pd-card-actions">
+            {finding.actions.map((action) => {
+              const actionKey = `${action.kind}:${action.key}`;
+              const isPending = mutation.isPending && pendingKey === actionKey;
+              return (
+                <button
+                  key={actionKey}
+                  type="button"
+                  className={`pd-action-btn ${action.applied ? "applied" : ""}`}
+                  disabled={action.applied || isPending}
+                  onClick={() => mutation.mutate(action)}
+                >
+                  {action.applied ? "Applied ✓" : isPending ? "Applying…" : action.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

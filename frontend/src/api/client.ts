@@ -10,6 +10,7 @@ import type {
   DiscoveredProject,
   EventDetail,
   ImportProgress,
+  CoachActionResult,
   CoachAvoidableResponse,
   CoachPatternsResponse,
   ImportSummary,
@@ -268,6 +269,13 @@ export function getCoachAvoidable(weeks = 12) {
 
 export function getCoachPatterns(weeks = 12) {
   return request<CoachPatternsResponse>(`/coach/patterns?weeks=${weeks}`);
+}
+
+export function applyCoachAction(kind: string, key: string, recommendation?: string) {
+  return request<CoachActionResult>(`/coach/actions/${encodeURIComponent(kind)}/${encodeURIComponent(key)}`, {
+    method: "POST",
+    body: JSON.stringify({ recommendation: recommendation ?? null }),
+  });
 }
 
 export function getSettings() {
