@@ -51,11 +51,11 @@ function App() {
   const autoRouted = React.useRef(false);
 
   // On first load only, if imports already exist, jump past the empty import
-  // screen to Triage. After that the user is free to navigate back to Import.
+  // screen to Coach. After that the user is free to navigate back to Import.
   React.useEffect(() => {
     if (!autoRouted.current && (imports.data?.length ?? 0) > 0) {
       autoRouted.current = true;
-      setView((current) => (current === "import" ? "map" : current));
+      setView((current) => (current === "import" ? "coach" : current));
     }
   }, [imports.data?.length]);
 

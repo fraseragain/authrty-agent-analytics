@@ -238,8 +238,8 @@ describe("App", () => {
 
     renderApp();
 
-    // With imports present, the app auto-advances to Overview on first load.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Overview" })).toHaveClass("active"));
+    // With imports present, the app auto-advances to Coach on first load.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Coach" })).toHaveClass("active"));
 
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
 
@@ -300,6 +300,7 @@ describe("App", () => {
   it("returns from a session to the originating Overview view", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
 
     fireEvent.click(await screen.findByText("App test session"));
 
@@ -312,6 +313,7 @@ describe("App", () => {
   it("returns from a session to the originating Cost view", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
     await screen.findByText("App test session");
 
     fireEvent.click(screen.getByRole("button", { name: "Cost" }));
@@ -326,6 +328,7 @@ describe("App", () => {
   it("returns from a deep-linked session to Explore and preserves the event focus", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
     await screen.findByText("App test session");
 
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
