@@ -218,8 +218,9 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               key={`${m.key}-${m.stackIdx}`}
               className="sot-skill-pill"
               style={{ left: `${m.pct}%`, top: m.stackIdx * PILL_H }}
+              title={m.label}
             >
-              {m.label}
+              <span className="sot-skill-pill-label">{m.label}</span>
               <span className="sot-skill-pill-date">{formatMarkerDate(m.applied_at)}</span>
             </span>
           ))}

@@ -115,7 +115,9 @@ describe("PatternDiscovery", () => {
     const card = cardFor("Deep loop sessions");
     fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
 
-    await waitFor(() => expect(applySpy).toHaveBeenCalledWith("create_agent", "bash-verifier", undefined));
+    await waitFor(() =>
+      expect(applySpy).toHaveBeenCalledWith("create_agent", "bash-verifier", undefined, "Deep loop sessions"),
+    );
   });
 
   it("invalidates the coach-avoidable query on success, so the spend chart's markers refresh", async () => {
@@ -197,7 +199,9 @@ describe("PatternDiscovery", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Add to CLAUDE.md" }));
 
     await waitFor(() =>
-      expect(applySpy).toHaveBeenCalledWith("claude_md", "deep-loop-sessions", "Add a bash-verifier subagent."),
+      expect(applySpy).toHaveBeenCalledWith(
+        "claude_md", "deep-loop-sessions", "Add a bash-verifier subagent.", "Deep loop sessions",
+      ),
     );
   });
 

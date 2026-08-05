@@ -79,7 +79,12 @@ function FindingCard({
 
   const mutation = useMutation({
     mutationFn: (action: CoachAction) =>
-      applyCoachAction(action.kind, action.key, action.kind === "claude_md" ? finding.recommendation : undefined),
+      applyCoachAction(
+        action.kind,
+        action.key,
+        action.kind === "claude_md" ? finding.recommendation : undefined,
+        finding.title,
+      ),
     onMutate: (action) => setPendingKey(`${action.kind}:${action.key}`),
     onSuccess: (result, action) => {
       onApplied(action.kind, action.label, result.detail, result.host_path);
