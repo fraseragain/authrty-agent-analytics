@@ -919,6 +919,10 @@ class CoachActionRequest(BaseModel):
 
     recommendation is only required for kind="claude_md" -- the route has no
     other way to recover a finding's recommendation text, since actions are
-    derived on the fly rather than looked up from a stored table.
+    derived on the fly rather than looked up from a stored table. finding_title
+    is optional context used only to give the applied-action marker a
+    meaningful label (e.g. "CLAUDE.md: Deep loop sessions" instead of the
+    generic "Add to CLAUDE.md" every claude_md action would otherwise share).
     """
     recommendation: str | None = None
+    finding_title: str | None = None

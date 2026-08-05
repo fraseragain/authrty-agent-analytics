@@ -291,7 +291,33 @@ def test_apply_action_with_conn_logs_a_marker(bare_conn: sqlite3.Connection, mon
     row = bare_conn.execute("SELECT kind, key, label FROM coach_applied_actions").fetchone()
     assert row["kind"] == "claude_md"
     assert row["key"] == "deep-loop-sessions"
-    assert row["label"] == coach_module._action_label("claude_md", "deep-loop-sessions")
+    # No finding_title supplied -- falls back to the generic action label.
+    assert row["label"] == "Add to CLAUDE.md"
+
+
+def test_apply_action_with_finding_title_logs_a_descriptive_marker_label(
+    bare_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(coach_module, "claude_md_path", lambda: tmp_path / "CLAUDE.md")
+
+    coach_module.apply_action(
+        "claude_md", "deep-loop-sessions", recommendation="Do the thing.",
+        finding_title="Deep loop sessions", conn=bare_conn,
+    )
+
+    row = bare_conn.execute("SELECT label FROM coach_applied_actions").fetchone()
+    assert row["label"] == "CLAUDE.md: Deep loop sessions"
+
+
+def test_marker_label_ignores_finding_title_for_non_claude_md_kinds(
+    bare_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(coach_module, "agents_dir", lambda: tmp_path / "agents")
+
+    coach_module.apply_action("create_agent", "bash-verifier", finding_title="Deep loop sessions", conn=bare_conn)
+
+    row = bare_conn.execute("SELECT label FROM coach_applied_actions").fetchone()
+    assert row["label"] == "Create bash-verifier agent"
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +419,18 @@ def test_post_coach_action_then_avoidable_shows_a_marker(client: TestClient) -> 
     assert markers[0]["key"] == "bash-verifier"
     assert markers[0]["label"] == "Create bash-verifier agent"
     assert markers[0]["week"] == markers[0]["applied_at"][:10]
+
+
+def test_post_coach_action_claude_md_with_finding_title_shows_descriptive_marker(client: TestClient) -> None:
+    resp = client.post(
+        "/api/coach/actions/claude_md/deep-loop-sessions",
+        json={"recommendation": "Add a bash-verifier subagent.", "finding_title": "Deep loop sessions"},
+    )
+    assert resp.status_code == 200
+
+    avoidable = client.get("/api/coach/avoidable")
+    markers = avoidable.json()["markers"]
+    assert markers[0]["label"] == "CLAUDE.md: Deep loop sessions"
 
 
 def test_coach_patterns_findings_carry_actions(client: TestClient) -> None:

@@ -158,3 +158,44 @@ def test_migrate_adds_team_privacy_level_columns():
     session_cols = {r[1] for r in conn.execute("PRAGMA table_info(team_bundle_sessions)")}
     assert "member_name" in bundle_cols
     assert {"project_name", "tools_json", "file_types_json"} <= session_cols
+
+
+def test_migrate_backfills_generic_claude_md_marker_labels():
+    """Markers logged before finding-aware labels existed all shared the
+    generic "Add to CLAUDE.md" label -- migrate_db() humanizes the
+    finding-slug key into a readable title as a best-effort fix."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at)"
+        " VALUES ('claude_md', 'deep-loop-sessions', 'Add to CLAUDE.md', '2026-06-01T00:00:00+00:00')"
+    )
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at)"
+        " VALUES ('create_agent', 'bash-verifier', 'Create bash-verifier agent', '2026-06-01T00:00:00+00:00')"
+    )
+    conn.commit()
+
+    init_db(conn)  # migrate_db() re-runs on an already-initialized db, same as every real startup
+
+    rows = {r["kind"]: r["label"] for r in conn.execute("SELECT kind, label FROM coach_applied_actions")}
+    assert rows["claude_md"] == "CLAUDE.md: Deep loop sessions"
+    assert rows["create_agent"] == "Create bash-verifier agent"  # untouched -- already descriptive
+
+
+def test_migrate_backfill_is_idempotent():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at)"
+        " VALUES ('claude_md', 'deep-loop-sessions', 'Add to CLAUDE.md', '2026-06-01T00:00:00+00:00')"
+    )
+    conn.commit()
+
+    init_db(conn)
+    init_db(conn)  # second migration pass must not touch the already-fixed label
+
+    row = conn.execute("SELECT label FROM coach_applied_actions").fetchone()
+    assert row["label"] == "CLAUDE.md: Deep loop sessions"

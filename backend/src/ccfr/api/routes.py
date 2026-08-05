@@ -708,6 +708,8 @@ def post_coach_action(
     conn: Connection = Depends(get_db),
 ) -> CoachActionResult:
     try:
-        return coach_module.apply_action(kind, key, recommendation=body.recommendation, conn=conn)
+        return coach_module.apply_action(
+            kind, key, recommendation=body.recommendation, finding_title=body.finding_title, conn=conn
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

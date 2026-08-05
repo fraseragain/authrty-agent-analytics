@@ -382,8 +382,39 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone() is not None
+
+
+def _backfill_coach_marker_labels(conn: sqlite3.Connection) -> None:
+    """One-time fix for markers logged before finding-aware labels existed.
+
+    Every claude_md marker used to share the generic "Add to CLAUDE.md" label
+    regardless of which finding it came from, making them indistinguishable
+    on the avoidable-spend chart. Humanizes the finding-slug key into a
+    readable title as a best-effort backfill; only touches rows still
+    carrying the old generic label, so it's a no-op after the first run.
+
+    migrate_db() can run against a hand-built partial schema (see tests) that
+    predates coach_applied_actions entirely -- skip rather than error.
+    """
+    if not _table_exists(conn, "coach_applied_actions"):
+        return
+    rows = conn.execute(
+        "SELECT id, key FROM coach_applied_actions WHERE kind = 'claude_md' AND label = 'Add to CLAUDE.md'"
+    ).fetchall()
+    for row_id, key in rows:
+        title = key.replace("-", " ").strip()
+        if title:
+            title = title[0].upper() + title[1:]
+        conn.execute("UPDATE coach_applied_actions SET label = ? WHERE id = ?", (f"CLAUDE.md: {title}", row_id))
+
+
 def migrate_db(conn: sqlite3.Connection) -> None:
     """Apply lightweight migrations for databases created by older app versions."""
+    _backfill_coach_marker_labels(conn)
     existing_message_columns = _column_names(conn, "messages")
     for name, definition in MESSAGE_COST_COLUMNS.items():
         if name not in existing_message_columns:

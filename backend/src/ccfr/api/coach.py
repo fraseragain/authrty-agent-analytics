@@ -588,10 +588,14 @@ def apply_permission_allow(tool: str, path: Path | None = None) -> None:
 
 
 def _action_label(kind: str, key: str) -> str:
-    """Single source for an action's display label, keyed only off kind+key.
+    """Single source for an action's button label, keyed only off kind+key.
 
-    Shared by _build_actions() (what the button says) and apply_action()
-    (what gets logged as applied) so the two can never drift apart.
+    Shared by _build_actions() (what the button says) and, as a fallback,
+    apply_action()'s marker log. create_agent/permission_allow labels are
+    already specific (the agent/tool name is in the key); claude_md's isn't
+    -- every claude_md button says the same mechanical thing regardless of
+    finding, which is fine on a card (the finding's own title is right there)
+    but useless on a detached chart marker. See _marker_label() for the fix.
     """
     if kind == "claude_md":
         return "Add to CLAUDE.md"
@@ -600,6 +604,14 @@ def _action_label(kind: str, key: str) -> str:
     if kind == "permission_allow":
         return f"Allow {key} without prompting"
     return f"{kind}: {key}"
+
+
+def _marker_label(kind: str, key: str, *, finding_title: str | None) -> str:
+    """Label for the applied-action marker log -- descriptive on its own,
+    since the chart pill has no surrounding card to supply context."""
+    if kind == "claude_md" and finding_title:
+        return f"CLAUDE.md: {finding_title}"
+    return _action_label(kind, key)
 
 
 def _build_actions(
@@ -1026,13 +1038,15 @@ def apply_action(
     key: str,
     *,
     recommendation: str | None = None,
+    finding_title: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> CoachActionResult:
     """Dispatch a POST /api/coach/actions/{kind}/{key} request to the right apply_*.
 
     `recommendation` is only required for kind="claude_md" -- the route has no
     other way to recover the finding's recommendation text, since actions are
-    derived on the fly rather than looked up from a stored table. `conn`, when
+    derived on the fly rather than looked up from a stored table. `finding_title`
+    only affects the marker log's label (see _marker_label()). `conn`, when
     given, logs the application for the avoidable-spend chart's markers.
     """
     if kind == "claude_md":
@@ -1057,7 +1071,7 @@ def apply_action(
         raise ValueError(f"Unknown action kind: {kind}")
 
     if conn is not None:
-        _log_applied_action(conn, kind=kind, key=key, label=_action_label(kind, key))
+        _log_applied_action(conn, kind=kind, key=key, label=_marker_label(kind, key, finding_title=finding_title))
     return CoachActionResult(applied=True, detail=detail, host_path=host_path)
 
 
