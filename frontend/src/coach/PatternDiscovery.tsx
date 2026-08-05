@@ -11,11 +11,17 @@ interface Props {
 
 interface ToastState {
   id: number;
+  kind: string;
   label: string;
   detail: string;
+  hostPath: string | null;
 }
 
 let toastId = 0;
+
+function fileUrl(hostPath: string): string {
+  return "file://" + hostPath.split("/").map(encodeURIComponent).join("/");
+}
 
 function formatLastSeen(iso: string): string {
   const date = new Date(iso);
@@ -45,6 +51,11 @@ function CoachToast({ toast, onDismiss }: { toast: ToastState; onDismiss: (id: n
       <div className="coach-toast-body">
         <span className="coach-toast-title">{toast.label}</span>
         <span className="coach-toast-detail">{toast.detail}</span>
+        {toast.kind === "claude_md" && toast.hostPath && (
+          <a className="coach-toast-link" href={fileUrl(toast.hostPath)} target="_blank" rel="noreferrer">
+            Open CLAUDE.md →
+          </a>
+        )}
       </div>
       <button className="coach-toast-dismiss" onClick={() => onDismiss(toast.id)} aria-label="Dismiss">
         <X size={12} />
@@ -58,7 +69,7 @@ function FindingCard({
   onApplied,
 }: {
   finding: CoachFinding;
-  onApplied: (label: string, detail: string) => void;
+  onApplied: (kind: string, label: string, detail: string, hostPath: string | null) => void;
 }) {
   const isWarning = finding.severity === "warning";
   const accentColor = isWarning ? WARNING_COLOR : INFO_COLOR;
@@ -71,7 +82,7 @@ function FindingCard({
       applyCoachAction(action.kind, action.key, action.kind === "claude_md" ? finding.recommendation : undefined),
     onMutate: (action) => setPendingKey(`${action.kind}:${action.key}`),
     onSuccess: (result, action) => {
-      onApplied(action.label, result.detail);
+      onApplied(action.kind, action.label, result.detail, result.host_path);
       void queryClient.invalidateQueries({ queryKey: ["coach-patterns"] });
     },
     onSettled: () => setPendingKey(null),
@@ -123,8 +134,8 @@ export default function PatternDiscovery({ data }: Props) {
   const [sortByLastSeen, setSortByLastSeen] = React.useState(false);
   const [toasts, setToasts] = React.useState<ToastState[]>([]);
 
-  const addToast = React.useCallback((label: string, detail: string) => {
-    setToasts((prev) => [...prev, { id: toastId++, label, detail }]);
+  const addToast = React.useCallback((kind: string, label: string, detail: string, hostPath: string | null) => {
+    setToasts((prev) => [...prev, { id: toastId++, kind, label, detail, hostPath }]);
   }, []);
   const dismissToast = React.useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

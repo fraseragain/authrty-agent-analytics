@@ -4570,7 +4570,7 @@ html:has(.specimen-dialog[open]) {
 .pd-action-btn.applied { border-color: var(--success); color: var(--success); opacity: 0.8; }
 
 .coach-toast-stack {
-  position: fixed; bottom: 20px; right: 24px; z-index: 200;
+  position: fixed; top: 20px; right: 24px; z-index: 200;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
 .coach-toast {
@@ -4583,7 +4583,7 @@ html:has(.specimen-dialog[open]) {
   animation: coach-toast-in .2s ease;
 }
 @keyframes coach-toast-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .coach-toast-icon { color: var(--success); flex-shrink: 0; margin-top: 1px; }
@@ -4593,6 +4593,11 @@ html:has(.specimen-dialog[open]) {
   font-size: 11px; color: var(--muted); font-family: var(--font-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.coach-toast-link {
+  font-size: 11px; font-weight: 600; color: var(--accent);
+  text-decoration: none; margin-top: 2px;
+}
+.coach-toast-link:hover { text-decoration: underline; }
 .coach-toast-dismiss {
   flex-shrink: 0; background: none; border: none; color: var(--faint);
   padding: 1px; cursor: pointer; display: flex; transition: color .15s;

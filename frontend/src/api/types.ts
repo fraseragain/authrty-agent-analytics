@@ -942,4 +942,5 @@ export interface CoachPatternsResponse {
 export interface CoachActionResult {
   applied: boolean;
   detail: string;
+  host_path: string | null;
 }

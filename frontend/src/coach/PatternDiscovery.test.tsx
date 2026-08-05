@@ -102,7 +102,7 @@ describe("PatternDiscovery", () => {
   });
 
   it("clicking an action button calls the endpoint and flips to Applied on success", async () => {
-    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok", host_path: null });
     renderWithClient(
       <PatternDiscovery
         data={response([
@@ -122,6 +122,7 @@ describe("PatternDiscovery", () => {
     vi.spyOn(client, "applyCoachAction").mockResolvedValue({
       applied: true,
       detail: "Created ~/.claude/agents/bash-verifier.md",
+      host_path: "/Users/fraser/.claude/agents/bash-verifier.md",
     });
     renderWithClient(
       <PatternDiscovery
@@ -140,7 +141,7 @@ describe("PatternDiscovery", () => {
   });
 
   it("dismisses a toast when its close button is clicked", async () => {
-    vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok", host_path: null });
     renderWithClient(
       <PatternDiscovery
         data={response([
@@ -160,7 +161,7 @@ describe("PatternDiscovery", () => {
   });
 
   it("passes the finding's recommendation text when applying a claude_md action", async () => {
-    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok", host_path: null });
     renderWithClient(
       <PatternDiscovery
         data={response([
@@ -177,6 +178,51 @@ describe("PatternDiscovery", () => {
     await waitFor(() =>
       expect(applySpy).toHaveBeenCalledWith("claude_md", "deep-loop-sessions", "Add a bash-verifier subagent."),
     );
+  });
+
+  it("shows an Open CLAUDE.md link in the toast when a claude_md action succeeds", async () => {
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({
+      applied: true,
+      detail: "Added to CLAUDE.md",
+      host_path: "/Users/fraser/.claude/CLAUDE.md",
+    });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "claude_md", key: "deep-loop-sessions", label: "Add to CLAUDE.md", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Add to CLAUDE.md" }));
+
+    const link = await screen.findByRole("link", { name: "Open CLAUDE.md →" });
+    expect(link).toHaveAttribute("href", "file:///Users/fraser/.claude/CLAUDE.md");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("does not show an Open CLAUDE.md link for non-claude_md actions", async () => {
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({
+      applied: true,
+      detail: "Created bash-verifier.md",
+      host_path: "/Users/fraser/.claude/agents/bash-verifier.md",
+    });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
+
+    await screen.findByText("Created bash-verifier.md");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("shows the last-seen date as a column on the card", () => {
