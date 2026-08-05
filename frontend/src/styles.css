@@ -4568,3 +4568,33 @@ html:has(.specimen-dialog[open]) {
 .pd-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .pd-action-btn:disabled { cursor: default; }
 .pd-action-btn.applied { border-color: var(--success); color: var(--success); opacity: 0.8; }
+
+.coach-toast-stack {
+  position: fixed; bottom: 20px; right: 24px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.coach-toast {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--surface); border: 1px solid var(--success);
+  border-left-width: 3px; border-radius: 8px;
+  padding: 10px 12px; min-width: 260px; max-width: 380px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  pointer-events: all;
+  animation: coach-toast-in .2s ease;
+}
+@keyframes coach-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.coach-toast-icon { color: var(--success); flex-shrink: 0; margin-top: 1px; }
+.coach-toast-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.coach-toast-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.coach-toast-detail {
+  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.coach-toast-dismiss {
+  flex-shrink: 0; background: none; border: none; color: var(--faint);
+  padding: 1px; cursor: pointer; display: flex; transition: color .15s;
+}
+.coach-toast-dismiss:hover { color: var(--text); }

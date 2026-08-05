@@ -118,6 +118,47 @@ describe("PatternDiscovery", () => {
     await waitFor(() => expect(applySpy).toHaveBeenCalledWith("create_agent", "bash-verifier", undefined));
   });
 
+  it("shows a toast with the action label and backend detail on success", async () => {
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({
+      applied: true,
+      detail: "Created ~/.claude/agents/bash-verifier.md",
+    });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
+
+    expect(await screen.findByText("Create bash-verifier agent")).toBeInTheDocument();
+    expect(await screen.findByText("Created ~/.claude/agents/bash-verifier.md")).toBeInTheDocument();
+  });
+
+  it("dismisses a toast when its close button is clicked", async () => {
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
+
+    const dismissBtn = await screen.findByRole("button", { name: "Dismiss" });
+    fireEvent.click(dismissBtn);
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument());
+  });
+
   it("passes the finding's recommendation text when applying a claude_md action", async () => {
     const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
     renderWithClient(
