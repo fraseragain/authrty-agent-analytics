@@ -306,7 +306,7 @@ def test_apply_action_with_finding_title_logs_a_descriptive_marker_label(
     )
 
     row = bare_conn.execute("SELECT label FROM coach_applied_actions").fetchone()
-    assert row["label"] == "CLAUDE.md: Deep loop sessions"
+    assert row["label"] == "Deep loop sessions"
 
 
 def test_marker_label_ignores_finding_title_for_non_claude_md_kinds(
@@ -430,7 +430,7 @@ def test_post_coach_action_claude_md_with_finding_title_shows_descriptive_marker
 
     avoidable = client.get("/api/coach/avoidable")
     markers = avoidable.json()["markers"]
-    assert markers[0]["label"] == "CLAUDE.md: Deep loop sessions"
+    assert markers[0]["label"] == "Deep loop sessions"
 
 
 def test_coach_patterns_findings_carry_actions(client: TestClient) -> None:

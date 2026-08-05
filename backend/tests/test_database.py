@@ -180,8 +180,26 @@ def test_migrate_backfills_generic_claude_md_marker_labels():
     init_db(conn)  # migrate_db() re-runs on an already-initialized db, same as every real startup
 
     rows = {r["kind"]: r["label"] for r in conn.execute("SELECT kind, label FROM coach_applied_actions")}
-    assert rows["claude_md"] == "CLAUDE.md: Deep loop sessions"
+    assert rows["claude_md"] == "Deep loop sessions"
     assert rows["create_agent"] == "Create bash-verifier agent"  # untouched -- already descriptive
+
+
+def test_migrate_backfills_claude_md_prefix_from_earlier_fix():
+    """A rows already carrying the interim "CLAUDE.md: X" label (from a
+    since-superseded fix) get the prefix stripped too."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at)"
+        " VALUES ('claude_md', 'deep-loop-sessions', 'CLAUDE.md: Deep loop sessions', '2026-06-01T00:00:00+00:00')"
+    )
+    conn.commit()
+
+    init_db(conn)
+
+    row = conn.execute("SELECT label FROM coach_applied_actions").fetchone()
+    assert row["label"] == "Deep loop sessions"
 
 
 def test_migrate_backfill_is_idempotent():
@@ -198,4 +216,4 @@ def test_migrate_backfill_is_idempotent():
     init_db(conn)  # second migration pass must not touch the already-fixed label
 
     row = conn.execute("SELECT label FROM coach_applied_actions").fetchone()
-    assert row["label"] == "CLAUDE.md: Deep loop sessions"
+    assert row["label"] == "Deep loop sessions"

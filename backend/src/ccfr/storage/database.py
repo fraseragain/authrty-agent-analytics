@@ -388,28 +388,40 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     ).fetchone() is not None
 
 
+def _humanize_key(key: str) -> str:
+    title = key.replace("-", " ").strip()
+    return title[0].upper() + title[1:] if title else title
+
+
 def _backfill_coach_marker_labels(conn: sqlite3.Connection) -> None:
-    """One-time fix for markers logged before finding-aware labels existed.
+    """One-time fixes for markers logged before finding-aware labels existed.
 
     Every claude_md marker used to share the generic "Add to CLAUDE.md" label
     regardless of which finding it came from, making them indistinguishable
-    on the avoidable-spend chart. Humanizes the finding-slug key into a
-    readable title as a best-effort backfill; only touches rows still
-    carrying the old generic label, so it's a no-op after the first run.
+    on the avoidable-spend chart. A first fix pass gave them a "CLAUDE.md: "
+    prefix; a second dropped it, since the finding's own title already
+    carries the meaning. Both passes here only touch rows still carrying
+    the label they're meant to fix, so this is a no-op after the first run.
 
     migrate_db() can run against a hand-built partial schema (see tests) that
     predates coach_applied_actions entirely -- skip rather than error.
     """
     if not _table_exists(conn, "coach_applied_actions"):
         return
-    rows = conn.execute(
+
+    generic = conn.execute(
         "SELECT id, key FROM coach_applied_actions WHERE kind = 'claude_md' AND label = 'Add to CLAUDE.md'"
     ).fetchall()
-    for row_id, key in rows:
-        title = key.replace("-", " ").strip()
-        if title:
-            title = title[0].upper() + title[1:]
-        conn.execute("UPDATE coach_applied_actions SET label = ? WHERE id = ?", (f"CLAUDE.md: {title}", row_id))
+    for row_id, key in generic:
+        conn.execute("UPDATE coach_applied_actions SET label = ? WHERE id = ?", (_humanize_key(key), row_id))
+
+    prefixed = conn.execute(
+        "SELECT id, label FROM coach_applied_actions WHERE kind = 'claude_md' AND label LIKE 'CLAUDE.md: %'"
+    ).fetchall()
+    for row_id, label in prefixed:
+        conn.execute(
+            "UPDATE coach_applied_actions SET label = ? WHERE id = ?", (label.removeprefix("CLAUDE.md: "), row_id)
+        )
 
 
 def migrate_db(conn: sqlite3.Connection) -> None:

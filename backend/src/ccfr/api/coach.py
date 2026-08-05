@@ -608,9 +608,11 @@ def _action_label(kind: str, key: str) -> str:
 
 def _marker_label(kind: str, key: str, *, finding_title: str | None) -> str:
     """Label for the applied-action marker log -- descriptive on its own,
-    since the chart pill has no surrounding card to supply context."""
+    since the chart pill has no surrounding card to supply context. The
+    finding's own title carries the meaning; a "CLAUDE.md:" prefix would
+    just repeat the mechanism, not the actual fix."""
     if kind == "claude_md" and finding_title:
-        return f"CLAUDE.md: {finding_title}"
+        return finding_title
     return _action_label(kind, key)
 
 
