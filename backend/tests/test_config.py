@@ -146,3 +146,52 @@ def test_app_version_falls_back_when_package_missing(monkeypatch):
 
     monkeypatch.setattr(config, "_pkg_version", _raise)
     assert config.app_version() == "0.1.0"
+
+
+def test_claude_home_defaults_to_home_dot_claude(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("CCFR_CLAUDE_HOME", raising=False)
+    monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path / "home"))
+    assert config.claude_home() == tmp_path / "home" / ".claude"
+
+
+def test_claude_home_env_override(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CCFR_CLAUDE_HOME", str(tmp_path / "scratch-claude"))
+    assert config.claude_home() == tmp_path / "scratch-claude"
+
+
+def test_agents_dir_and_claude_md_and_settings_paths_derive_from_claude_home(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CCFR_CLAUDE_HOME", str(tmp_path / "scratch-claude"))
+    assert config.agents_dir() == tmp_path / "scratch-claude" / "agents"
+    assert config.claude_md_path() == tmp_path / "scratch-claude" / "CLAUDE.md"
+    assert config.claude_settings_path() == tmp_path / "scratch-claude" / "settings.json"
+
+
+def test_claude_home_display_defaults_to_claude_home(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("CCFR_CLAUDE_HOME_DISPLAY", raising=False)
+    monkeypatch.setenv("CCFR_CLAUDE_HOME", str(tmp_path / "container-mount"))
+    assert config.claude_home_display() == tmp_path / "container-mount"
+
+
+def test_claude_home_display_env_override(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CCFR_CLAUDE_HOME", str(tmp_path / "container-mount"))
+    monkeypatch.setenv("CCFR_CLAUDE_HOME_DISPLAY", str(tmp_path / "host" / ".claude"))
+    assert config.claude_home_display() == tmp_path / "host" / ".claude"
+    assert config.claude_home_display() != config.claude_home()
+
+
+def test_resolve_within_claude_home_rejects_escape(tmp_path: Path):
+    root = tmp_path / "claude"
+    root.mkdir()
+    inside = root / "agents" / "bash-verifier.md"
+    outside = tmp_path / "outside.md"
+    inside.parent.mkdir()
+    inside.write_text("x", encoding="utf-8")
+    outside.write_text("x", encoding="utf-8")
+
+    assert config.resolve_within_claude_home(str(inside), root) == inside.resolve()
+    try:
+        config.resolve_within_claude_home(str(outside), root)
+    except ValueError as exc:
+        assert "Claude home" in str(exc)
+    else:
+        raise AssertionError("expected path escape to fail")

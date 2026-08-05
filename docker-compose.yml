@@ -10,8 +10,16 @@ services:
       CCFR_DB_PATH: /app/data/ccfr.sqlite3
       CCFR_IMPORT_ROOT: /imports
       CCFR_TEAM_BUNDLE_ROOT: /team-bundles
+      CCFR_CLAUDE_HOME: /claude-home
+      # Real host path behind /claude-home -- used only to build openable
+      # file:// links in the UI, never for reads or writes.
+      CCFR_CLAUDE_HOME_DISPLAY: ${HOME}/.claude
     volumes:
       - ./Data:/imports:ro
+      # Read-write, separate from the read-only import mount above -- Coach's
+      # apply-fix actions write agents/CLAUDE.md/settings.json here. See
+      # docs/architecture.md's security section for the read/write split.
+      - ${HOME}/.claude:/claude-home:rw
       - ccfr-data:/app/data
       - ./TeamBundles:/team-bundles
       # Mount pricing.csv read-only so edits take effect on the next request (no rebuild).

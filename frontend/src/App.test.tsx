@@ -55,6 +55,14 @@ vi.mock("./api/client", () => ({
     event_count: 0, subagent_count: 0, memory_count: 0, persisted_output_count: 0,
   })),
   getRecentLimitHits: vi.fn(async () => ({ hits: [], checked_at: new Date().toISOString() })),
+  getCoachAvoidable: vi.fn(async () => ({
+    weeks: [],
+    summary: {
+      total_usd: 0, avoidable_usd: 0, avoidable_pct: 0, loop_waste_usd: 0,
+      error_retry_usd: 0, alerted_usd: 0, model_overkill_usd: 0, vs_prev_period_pct: null,
+    },
+  })),
+  getCoachPatterns: vi.fn(async () => ({ findings: [], total_session_count: 0, weeks: 12 })),
   getCostAnalytics: vi.fn(async () => ({
     meta: { available: false, unpriced_models: [], total_usd: 0, total_tokens: 0,
       available_projects: [], available_models: [], bucket: "day" },
@@ -230,8 +238,8 @@ describe("App", () => {
 
     renderApp();
 
-    // With imports present, the app auto-advances to Overview on first load.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Overview" })).toHaveClass("active"));
+    // With imports present, the app auto-advances to Coach on first load.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Coach" })).toHaveClass("active"));
 
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
 
@@ -292,6 +300,7 @@ describe("App", () => {
   it("returns from a session to the originating Overview view", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
 
     fireEvent.click(await screen.findByText("App test session"));
 
@@ -304,6 +313,7 @@ describe("App", () => {
   it("returns from a session to the originating Cost view", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
     await screen.findByText("App test session");
 
     fireEvent.click(screen.getByRole("button", { name: "Cost" }));
@@ -318,6 +328,7 @@ describe("App", () => {
   it("returns from a deep-linked session to Explore and preserves the event focus", async () => {
     mockImportedSession();
     renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Overview" }));
     await screen.findByText("App test session");
 
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));

@@ -160,6 +160,7 @@ CCFR_DATA_DIR=<repo>/.ccfr-data
 CCFR_DB_PATH=<CCFR_DATA_DIR>/ccfr.sqlite3
 CCFR_IMPORT_ROOT=<repo>/Data
 CCFR_TEAM_BUNDLE_ROOT=<CCFR_DATA_DIR>/team-bundles
+CCFR_CLAUDE_HOME=~/.claude
 CCFR_PRICING_PATH=<repo>/pricing.csv
 CCFR_PRICING_DIR=<repo>/pricing
 CCFR_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -189,3 +190,39 @@ The app assumes local trust:
 
 Do not expose the backend or frontend to a LAN or the public internet without
 adding authentication and additional request protections.
+
+### Coach apply-fix actions: read-write access to `~/.claude`
+
+Coach's pattern-discovery findings can each offer one-click fixes (see
+`backend/src/ccfr/api/coach.py`'s `_build_actions()`): writing an agent file
+under `~/.claude/agents/`, appending a suggestion to `~/.claude/CLAUDE.md`, or
+adding a tool to `~/.claude/settings.json`'s permission allow-list. Every one
+of these only runs when the user clicks the corresponding button in the UI —
+nothing is applied automatically from a finding alone.
+
+This is a real, deliberate escalation from the read-only posture the rest of
+the app keeps everywhere else. `docker-compose.yml` mounts `~/.claude` twice,
+at different container paths with different permissions:
+
+```yaml
+volumes:
+  - ${HOME}/.claude/projects:/imports:ro   # existing: read-only, session logs only
+  - ${HOME}/.claude:/claude-home:rw        # new: read-write, for Coach's apply actions
+```
+
+Because both mounts point at the same host directory, the container *could*
+technically write to `/claude-home/projects/...` too. In practice the app
+never constructs a path there: every write goes through
+`resolve_within_claude_home()` (`backend/src/ccfr/config.py`), which mirrors
+`resolve_within_import_root()`'s confinement pattern and is the only way
+`coach.py`'s `create_agent()`, `apply_claude_md_snippet()`, and
+`apply_permission_allow()` resolve their target paths — all three write via a
+temp-file-then-rename, and all three are idempotent (a marker comment for
+CLAUDE.md, a JSON list membership check for settings.json) so re-clicking an
+already-applied action is a no-op rather than a duplicate write.
+
+Hooks (`settings.json`'s `hooks` key, which execute shell commands
+automatically on tool events) are explicitly out of scope for Coach's
+apply-fix actions — the only fix type in this design space that runs
+something rather than informing the model, and the one where an
+auto-generated fix is most likely to be subtly wrong.

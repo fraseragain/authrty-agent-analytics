@@ -10,6 +10,9 @@ import type {
   DiscoveredProject,
   EventDetail,
   ImportProgress,
+  CoachActionResult,
+  CoachAvoidableResponse,
+  CoachPatternsResponse,
   ImportSummary,
   LimitHitsAlertResponse,
   LimitsResponse,
@@ -258,6 +261,21 @@ export function getLimits() {
 export function getRecentLimitHits(since?: string) {
   const query = since ? `?since=${encodeURIComponent(since)}` : "";
   return request<LimitHitsAlertResponse>(`/alerts/limit-hits${query}`);
+}
+
+export function getCoachAvoidable(weeks = 12) {
+  return request<CoachAvoidableResponse>(`/coach/avoidable?weeks=${weeks}`);
+}
+
+export function getCoachPatterns(weeks = 12) {
+  return request<CoachPatternsResponse>(`/coach/patterns?weeks=${weeks}`);
+}
+
+export function applyCoachAction(kind: string, key: string, recommendation?: string, findingTitle?: string) {
+  return request<CoachActionResult>(`/coach/actions/${encodeURIComponent(kind)}/${encodeURIComponent(key)}`, {
+    method: "POST",
+    body: JSON.stringify({ recommendation: recommendation ?? null, finding_title: findingTitle ?? null }),
+  });
 }
 
 export function getSettings() {

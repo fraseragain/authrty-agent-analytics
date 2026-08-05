@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlite3 import Connection
 
 from ccfr import config
-from ccfr.api import analytics, repository
+from ccfr.api import analytics, coach as coach_module, repository
 from ccfr.api.deps import get_db, get_historical_pricing
 from ccfr.api.import_progress import import_progress_store
 from ccfr.settings import Settings, contributor_identity, read_settings, write_settings
@@ -47,6 +47,10 @@ from ccfr.api.schemas import (
     EventDetail,
     ImportProgressResponse,
     ImportRequest,
+    CoachActionRequest,
+    CoachActionResult,
+    CoachAvoidableResponse,
+    CoachPatternsResponse,
     ImportSummaryResponse,
     LimitHitsAlertResponse,
     LimitsResponse,
@@ -677,3 +681,35 @@ def get_recent_limit_hits(
         hits=[hit_payload(h) for h in hits],
         checked_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+@router.get("/coach/avoidable", response_model=CoachAvoidableResponse)
+def get_coach_avoidable(
+    weeks: int = Query(default=12, ge=1, le=52),
+    conn: Connection = Depends(get_db),
+    historical: bool = Depends(get_historical_pricing),
+) -> CoachAvoidableResponse:
+    return coach_module.avoidable_spend(conn, weeks=weeks, historical=historical)
+
+
+@router.get("/coach/patterns", response_model=CoachPatternsResponse)
+def get_coach_patterns(
+    weeks: int = Query(default=12, ge=1, le=52),
+    conn: Connection = Depends(get_db),
+) -> CoachPatternsResponse:
+    return coach_module.pattern_analysis(conn, weeks=weeks)
+
+
+@router.post("/coach/actions/{kind}/{key}", response_model=CoachActionResult)
+def post_coach_action(
+    kind: str,
+    key: str,
+    body: CoachActionRequest = CoachActionRequest(),
+    conn: Connection = Depends(get_db),
+) -> CoachActionResult:
+    try:
+        return coach_module.apply_action(
+            kind, key, recommendation=body.recommendation, finding_title=body.finding_title, conn=conn
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

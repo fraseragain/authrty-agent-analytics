@@ -279,6 +279,16 @@ CREATE INDEX IF NOT EXISTS idx_risk_findings_session ON risk_findings(session_id
 CREATE INDEX IF NOT EXISTS idx_risk_findings_category ON risk_findings(category);
 CREATE INDEX IF NOT EXISTS idx_risk_findings_score ON risk_findings(score);
 
+CREATE TABLE IF NOT EXISTS coach_applied_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_coach_applied_actions_applied_at ON coach_applied_actions(applied_at);
+
 CREATE TABLE IF NOT EXISTS team_bundles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bundle_id TEXT NOT NULL UNIQUE,
@@ -372,8 +382,51 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone() is not None
+
+
+def _humanize_key(key: str) -> str:
+    title = key.replace("-", " ").strip()
+    return title[0].upper() + title[1:] if title else title
+
+
+def _backfill_coach_marker_labels(conn: sqlite3.Connection) -> None:
+    """One-time fixes for markers logged before finding-aware labels existed.
+
+    Every claude_md marker used to share the generic "Add to CLAUDE.md" label
+    regardless of which finding it came from, making them indistinguishable
+    on the avoidable-spend chart. A first fix pass gave them a "CLAUDE.md: "
+    prefix; a second dropped it, since the finding's own title already
+    carries the meaning. Both passes here only touch rows still carrying
+    the label they're meant to fix, so this is a no-op after the first run.
+
+    migrate_db() can run against a hand-built partial schema (see tests) that
+    predates coach_applied_actions entirely -- skip rather than error.
+    """
+    if not _table_exists(conn, "coach_applied_actions"):
+        return
+
+    generic = conn.execute(
+        "SELECT id, key FROM coach_applied_actions WHERE kind = 'claude_md' AND label = 'Add to CLAUDE.md'"
+    ).fetchall()
+    for row_id, key in generic:
+        conn.execute("UPDATE coach_applied_actions SET label = ? WHERE id = ?", (_humanize_key(key), row_id))
+
+    prefixed = conn.execute(
+        "SELECT id, label FROM coach_applied_actions WHERE kind = 'claude_md' AND label LIKE 'CLAUDE.md: %'"
+    ).fetchall()
+    for row_id, label in prefixed:
+        conn.execute(
+            "UPDATE coach_applied_actions SET label = ? WHERE id = ?", (label.removeprefix("CLAUDE.md: "), row_id)
+        )
+
+
 def migrate_db(conn: sqlite3.Connection) -> None:
     """Apply lightweight migrations for databases created by older app versions."""
+    _backfill_coach_marker_labels(conn)
     existing_message_columns = _column_names(conn, "messages")
     for name, definition in MESSAGE_COST_COLUMNS.items():
         if name not in existing_message_columns:

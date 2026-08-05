@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { DollarSign, Download, LayoutDashboard, Sparkles, Upload } from "lucide-react";
+import { Compass, DollarSign, Download, LayoutDashboard, Sparkles, Upload } from "lucide-react";
 import type { DataScope } from "./useDataScope";
 
-export type View = "import" | "export" | "map" | "session" | "cost" | "discover";
+export type View = "import" | "export" | "map" | "session" | "cost" | "coach" | "discover";
 
 export interface NavItem {
   key: View;
@@ -22,5 +22,6 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "export", label: "Export", icon: Download, scopes: ["local"] },
   { key: "map", label: "Overview", icon: LayoutDashboard, scopes: ["local", "team"] },
   { key: "cost", label: "Cost", icon: DollarSign, scopes: ["local", "team"] },
+  { key: "coach", label: "Coach", icon: Compass, scopes: ["local"] },
   { key: "discover", label: "Explore", icon: Sparkles, scopes: ["local"] },
 ];

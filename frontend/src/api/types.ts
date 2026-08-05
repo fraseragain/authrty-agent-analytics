@@ -871,3 +871,76 @@ export interface TeamDashboard {
   file_types?: { ext: string; count: number; session_count: number }[];
   over_time?: Array<{ date: string; session_count: number; tokens: number }>;
 }
+
+export interface CoachWeek {
+  week: string;
+  week_label: string;
+  total_usd: number;
+  efficient_usd: number;
+  loop_waste_usd: number;
+  error_retry_usd: number;
+  alerted_usd: number;
+  model_overkill_usd: number;
+  avoidable_usd: number;
+  session_count: number;
+  is_partial: boolean;
+  partial_days: number;
+}
+
+export interface CoachSummary {
+  total_usd: number;
+  avoidable_usd: number;
+  avoidable_pct: number;
+  loop_waste_usd: number;
+  error_retry_usd: number;
+  alerted_usd: number;
+  model_overkill_usd: number;
+  vs_prev_period_pct: number | null;
+}
+
+export interface CoachActionMarker {
+  kind: string;
+  key: string;
+  label: string;
+  applied_at: string;
+  week: string;
+}
+
+export interface CoachAvoidableResponse {
+  weeks: CoachWeek[];
+  summary: CoachSummary;
+  markers: CoachActionMarker[];
+}
+
+export interface CoachAction {
+  kind: string; // "claude_md" | "create_agent" | "permission_allow"
+  key: string;
+  label: string;
+  applied: boolean;
+}
+
+export interface CoachFinding {
+  title: string;
+  body: string;
+  recommendation: string;
+  metric: string;
+  severity: string; // "warning" | "info"
+  session_count: number;
+  occurrence_count: number;
+  skill_key: string | null;
+  source: string; // "risk_patterns" | "heuristic" | "workflow"
+  last_seen_at: string | null;
+  actions: CoachAction[];
+}
+
+export interface CoachPatternsResponse {
+  findings: CoachFinding[];
+  total_session_count: number;
+  weeks: number;
+}
+
+export interface CoachActionResult {
+  applied: boolean;
+  detail: string;
+  host_path: string | null;
+}

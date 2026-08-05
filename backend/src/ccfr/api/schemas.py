@@ -839,3 +839,90 @@ class TeamDashboardResponse(BaseModel):
     projects: list[dict[str, Any]] = Field(default_factory=list)
     tools: list[dict[str, Any]] = Field(default_factory=list)
     file_types: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CoachWeek(BaseModel):
+    week: str
+    week_label: str
+    total_usd: float = 0.0
+    efficient_usd: float = 0.0
+    loop_waste_usd: float = 0.0
+    error_retry_usd: float = 0.0
+    alerted_usd: float = 0.0
+    model_overkill_usd: float = 0.0
+    avoidable_usd: float = 0.0
+    session_count: int = 0
+    is_partial: bool = False
+    partial_days: int = 7
+
+
+class CoachSummary(BaseModel):
+    total_usd: float = 0.0
+    avoidable_usd: float = 0.0
+    avoidable_pct: float = 0.0
+    loop_waste_usd: float = 0.0
+    error_retry_usd: float = 0.0
+    alerted_usd: float = 0.0
+    model_overkill_usd: float = 0.0
+    vs_prev_period_pct: float | None = None
+
+
+class CoachActionMarker(BaseModel):
+    kind: str
+    key: str
+    label: str
+    applied_at: str
+    week: str  # YYYY-MM-DD bucket, matches CoachWeek.week for chart alignment
+
+
+class CoachAvoidableResponse(BaseModel):
+    weeks: list[CoachWeek] = Field(default_factory=list)
+    summary: CoachSummary = Field(default_factory=CoachSummary)
+    markers: list[CoachActionMarker] = Field(default_factory=list)
+
+
+class CoachAction(BaseModel):
+    kind: str  # "claude_md" | "create_agent" | "permission_allow"
+    key: str
+    label: str
+    applied: bool = False
+
+
+class CoachFinding(BaseModel):
+    title: str
+    body: str
+    recommendation: str
+    metric: str
+    severity: str  # "warning" | "info"
+    session_count: int = 0
+    occurrence_count: int = 0
+    skill_key: str | None = None
+    source: str  # "risk_patterns" | "heuristic" | "workflow"
+    last_seen_at: str | None = None
+    actions: list[CoachAction] = Field(default_factory=list)
+
+
+class CoachPatternsResponse(BaseModel):
+    findings: list[CoachFinding] = Field(default_factory=list)
+    total_session_count: int = 0
+    weeks: int = 12
+
+
+class CoachActionResult(BaseModel):
+    applied: bool
+    detail: str
+    host_path: str | None = None
+
+
+class CoachActionRequest(BaseModel):
+    """Body for POST /api/coach/actions/{kind}/{key}.
+
+    recommendation is only required for kind="claude_md" -- the route has no
+    other way to recover a finding's recommendation text, since actions are
+    derived on the fly rather than looked up from a stored table. finding_title
+    is optional context used only to give the applied-action marker a
+    meaningful label (e.g. "CLAUDE.md: Deep loop sessions" instead of the
+    generic "Add to CLAUDE.md" every claude_md action would otherwise share).
+    """
+    recommendation: str | None = None
+    finding_title: str | None = None
