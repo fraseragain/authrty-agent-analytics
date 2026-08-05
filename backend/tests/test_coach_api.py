@@ -76,3 +76,26 @@ def test_coach_avoidable_honors_weeks_param(client: TestClient) -> None:
 
     resp_bad = client.get("/api/coach/avoidable", params={"weeks": 0})
     assert resp_bad.status_code == 422
+
+
+def test_coach_patterns_endpoint_returns_findings(client: TestClient) -> None:
+    conn = client.seed_conn  # type: ignore[attr-defined]
+    project_id = int(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
+    ts = _now()
+    _add_session(conn, project_id, "s1", ts, max_repeat=8)
+    _add_session(conn, project_id, "s2", ts, max_repeat=9)
+    conn.commit()
+
+    resp = client.get("/api/coach/patterns")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_session_count"] == 2
+    assert any(f["title"] == "Deep loop sessions" for f in body["findings"])
+
+
+def test_coach_patterns_endpoint_empty_corpus(client: TestClient) -> None:
+    resp = client.get("/api/coach/patterns")
+
+    assert resp.status_code == 200
+    assert resp.json()["findings"] == []
