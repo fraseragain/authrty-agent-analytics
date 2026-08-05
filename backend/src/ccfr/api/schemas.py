@@ -882,6 +882,7 @@ class CoachFinding(BaseModel):
     occurrence_count: int = 0
     skill_key: str | None = None
     source: str  # "risk_patterns" | "heuristic" | "workflow"
+    last_seen_at: str | None = None
 
 
 class CoachPatternsResponse(BaseModel):

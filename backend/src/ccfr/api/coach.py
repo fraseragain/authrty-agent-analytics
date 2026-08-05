@@ -383,15 +383,17 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
     # --- error pattern clustering: known error signatures in tool_results ---
     err_preview_rows = conn.execute(
         """
-        SELECT output_preview,
-               COUNT(DISTINCT session_id) AS session_count,
-               COUNT(*) AS occurrence_count
-        FROM tool_results
-        WHERE is_error = 1
-          AND output_preview IS NOT NULL
-          AND length(output_preview) > 5
-          AND session_id IN (SELECT id FROM sessions WHERE first_ts >= ?)
-        GROUP BY output_preview
+        SELECT tr.output_preview,
+               COUNT(DISTINCT tr.session_id) AS session_count,
+               COUNT(*) AS occurrence_count,
+               MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
+        FROM tool_results tr
+        JOIN sessions s ON s.id = tr.session_id
+        WHERE tr.is_error = 1
+          AND tr.output_preview IS NOT NULL
+          AND length(tr.output_preview) > 5
+          AND s.first_ts >= ?
+        GROUP BY tr.output_preview
         """,
         (cutoff,),
     ).fetchall()
@@ -404,6 +406,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         occurrence_count = sum(r["occurrence_count"] for r in rows)
         if session_count < 2:
             continue
+        last_seen = max((r["last_seen"] for r in rows if r["last_seen"]), default=None)
         findings.append(CoachFinding(
             title=pat["title"],
             body=pat["body"].format(sessions=session_count, occurrences=occurrence_count),
@@ -414,6 +417,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             occurrence_count=occurrence_count,
             skill_key=pat.get("skill_key"),
             source="heuristic",
+            last_seen_at=last_seen,
         ))
 
     findings.sort(key=lambda f: f.occurrence_count, reverse=True)
@@ -421,11 +425,11 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
     # --- error concentration: a small minority of sessions holding most errors ---
     error_rows = conn.execute(
         """
-        SELECT session_id, COUNT(*) AS err_count
-        FROM tool_results
-        WHERE is_error = 1
-          AND session_id IN (SELECT id FROM sessions WHERE first_ts >= ?)
-        GROUP BY session_id
+        SELECT tr.session_id, COUNT(*) AS err_count, MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
+        FROM tool_results tr
+        JOIN sessions s ON s.id = tr.session_id
+        WHERE tr.is_error = 1 AND s.first_ts >= ?
+        GROUP BY tr.session_id
         ORDER BY err_count DESC
         """,
         (cutoff,),
@@ -435,14 +439,17 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         total_errors = sum(r["err_count"] for r in error_rows)
         running = 0
         top_n = 0
+        top_rows: list[sqlite3.Row] = []
         for r in error_rows:
             running += r["err_count"]
             top_n += 1
+            top_rows.append(r)
             if running / total_errors >= 0.8:
                 break
         # Only surface if a small minority of sessions dominates.
         if top_n <= max(1, len(error_rows) // 3) and top_n <= 5:
             pct = int(running / total_errors * 100)
+            last_seen = max((r["last_seen"] for r in top_rows if r["last_seen"]), default=None)
             findings.append(CoachFinding(
                 title="Error concentration",
                 body=(
@@ -457,12 +464,13 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 session_count=top_n,
                 occurrence_count=running,
                 source="heuristic",
+                last_seen_at=last_seen,
             ))
 
     # --- deep loop sessions ---
     deep = conn.execute(
         """
-        SELECT COUNT(*) AS n
+        SELECT COUNT(*) AS n, MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
         FROM session_stats ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE ss.max_repeat >= 8 AND s.first_ts >= ?
@@ -484,6 +492,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             session_count=n,
             skill_key="bash-verifier",
             source="heuristic",
+            last_seen_at=deep["last_seen"],
         ))
 
     # --- project efficiency hotspot ---
@@ -492,7 +501,8 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         SELECT s.cwd,
                COUNT(DISTINCT s.id) AS session_count,
                SUM(ss.loop_count) AS total_loops,
-               SUM(ss.tool_call_count) AS total_tools
+               SUM(ss.tool_call_count) AS total_tools,
+               MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
         FROM sessions s
         JOIN session_stats ss ON ss.session_id = s.id
         WHERE s.first_ts >= ? AND s.cwd IS NOT NULL
@@ -532,6 +542,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 session_count=int(worst["session_count"]),
                 skill_key="bash-verifier",
                 source="heuristic",
+                last_seen_at=worst["last_seen"],
             ))
 
     return findings
@@ -549,7 +560,8 @@ def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int 
         SELECT rf.category, rf.title,
                COUNT(DISTINCT rf.session_id) AS session_count,
                COUNT(*) AS occurrence_count,
-               MAX(CASE rf.severity WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END) AS severity_rank
+               MAX(CASE rf.severity WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END) AS severity_rank,
+               MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
         FROM risk_findings rf
         JOIN sessions s ON s.id = rf.session_id
         WHERE s.first_ts >= ?
@@ -579,6 +591,7 @@ def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int 
             session_count=session_count,
             occurrence_count=occurrence_count,
             source="risk_patterns",
+            last_seen_at=row["last_seen"],
         ))
     return findings
 
@@ -630,6 +643,11 @@ def _workflow_findings(
         if len(session_ids) < min_sessions:
             break  # sorted descending, so nothing after this qualifies either
         label = " → ".join(gram)
+        placeholders = ",".join("?" * len(session_ids))
+        last_seen = conn.execute(
+            f"SELECT MAX(COALESCE(last_ts, first_ts)) FROM sessions WHERE id IN ({placeholders})",
+            tuple(session_ids),
+        ).fetchone()[0]
         findings.append(CoachFinding(
             title=f"Repeated workflow: {label}",
             body=f"This exact sequence of tool calls appears in {len(session_ids)} different sessions.",
@@ -639,6 +657,7 @@ def _workflow_findings(
             session_count=len(session_ids),
             occurrence_count=len(session_ids),
             source="workflow",
+            last_seen_at=last_seen,
         ))
         if len(findings) >= limit:
             break
