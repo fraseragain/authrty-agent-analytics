@@ -898,18 +898,18 @@ export interface CoachSummary {
   vs_prev_period_pct: number | null;
 }
 
+export interface CoachActionMarker {
+  kind: string;
+  key: string;
+  label: string;
+  applied_at: string;
+  week: string;
+}
+
 export interface CoachAvoidableResponse {
   weeks: CoachWeek[];
   summary: CoachSummary;
-}
-
-// Not yet produced by the backend (skill detection is a later phase) --
-// kept here so AvoidableSpendChart's markers prop doesn't need touching
-// again once it is.
-export interface CoachSkillMarker {
-  skill_key: string;
-  detected_at: string;
-  week: string;
+  markers: CoachActionMarker[];
 }
 
 export interface CoachAction {

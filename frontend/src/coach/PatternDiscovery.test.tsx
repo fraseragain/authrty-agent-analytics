@@ -118,6 +118,27 @@ describe("PatternDiscovery", () => {
     await waitFor(() => expect(applySpy).toHaveBeenCalledWith("create_agent", "bash-verifier", undefined));
   });
 
+  it("invalidates the coach-avoidable query on success, so the spend chart's markers refresh", async () => {
+    vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok", host_path: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(["coach-avoidable"], { weeks: [], summary: {}, markers: [] });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PatternDiscovery
+          data={response([
+            finding({
+              actions: [{ kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false }],
+            }),
+          ])}
+        />
+      </QueryClientProvider>,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
+
+    await waitFor(() => expect(queryClient.getQueryState(["coach-avoidable"])?.isInvalidated).toBe(true));
+  });
+
   it("shows a toast with the action label and backend detail on success", async () => {
     vi.spyOn(client, "applyCoachAction").mockResolvedValue({
       applied: true,

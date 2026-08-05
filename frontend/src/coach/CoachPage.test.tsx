@@ -26,6 +26,7 @@ beforeEach(() => {
       total_usd: 10, avoidable_usd: 0, avoidable_pct: 0, loop_waste_usd: 0,
       error_retry_usd: 0, alerted_usd: 0, model_overkill_usd: 0, vs_prev_period_pct: null,
     },
+    markers: [],
   });
   vi.spyOn(client, "getCoachPatterns").mockResolvedValue({
     findings: [

@@ -1,11 +1,17 @@
-import type { CoachWeek, CoachSkillMarker } from "../api/types";
+import type { CoachWeek, CoachActionMarker } from "../api/types";
 import {
   SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR, SUBAGENT_COLOR,
 } from "../analytics/chartGeometry";
 
 interface Props {
   weeks: CoachWeek[];
-  markers: CoachSkillMarker[];
+  markers: CoachActionMarker[];
+}
+
+function formatMarkerDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 const W = 600;
@@ -121,14 +127,14 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
   for (let i = 0; i < n; i += step) xIdxs.push(i);
   if (n > 0 && xIdxs[xIdxs.length - 1] !== n - 1) xIdxs.push(n - 1);
 
-  // One SVG line per unique x position (deduplicated), individual pill per skill
+  // One SVG line per unique x position (deduplicated), individual pill per applied action
   const individualMarkers = markers
     .flatMap((m) => {
       const idx = weeks.findIndex((w) => w.week === m.week);
       if (idx < 0) return [];
       const x = r(xAt(idx));
       if (x < PL) return [];
-      return [{ x, pct: (x / W) * 100, key: m.skill_key, detected_at: m.detected_at }];
+      return [{ x, pct: (x / W) * 100, key: `${m.kind}:${m.key}`, label: m.label, applied_at: m.applied_at }];
     });
 
   const uniqueXPositions = Array.from(new Set(individualMarkers.map((m) => m.x)));
@@ -213,8 +219,8 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               className="sot-skill-pill"
               style={{ left: `${m.pct}%`, top: m.stackIdx * PILL_H }}
             >
-              {m.key.replace(/-/g, "‑")}
-              <span className="sot-skill-pill-date">{m.detected_at}</span>
+              {m.label}
+              <span className="sot-skill-pill-date">{formatMarkerDate(m.applied_at)}</span>
             </span>
           ))}
         </div>

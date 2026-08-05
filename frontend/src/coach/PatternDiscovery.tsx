@@ -84,6 +84,9 @@ function FindingCard({
     onSuccess: (result, action) => {
       onApplied(action.kind, action.label, result.detail, result.host_path);
       void queryClient.invalidateQueries({ queryKey: ["coach-patterns"] });
+      // Applying an action logs a marker server-side -- refetch the spend
+      // chart too so it shows up without a manual page reload.
+      void queryClient.invalidateQueries({ queryKey: ["coach-avoidable"] });
     },
     onSettled: () => setPendingKey(null),
   });

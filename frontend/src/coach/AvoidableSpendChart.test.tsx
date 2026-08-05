@@ -41,16 +41,34 @@ describe("AvoidableSpendChart", () => {
     expect(screen.getByText("2 Jun")).toBeInTheDocument();
   });
 
-  it("renders a skill marker pill when a marker lands on a visible week", () => {
+  it("renders an action marker pill when a marker lands on a visible week", () => {
     const weeks = [week({ week: "2026-06-01", week_label: "1 Jun", total_usd: 10, efficient_usd: 10 })];
     render(
       <AvoidableSpendChart
         weeks={weeks}
-        markers={[{ skill_key: "haiku-router", detected_at: "2026-06-01", week: "2026-06-01" }]}
+        markers={[{
+          kind: "create_agent", key: "haiku-router", label: "Create haiku-router agent",
+          applied_at: "2026-06-01T10:00:00Z", week: "2026-06-01",
+        }]}
       />,
     );
 
-    expect(screen.getByText(/haiku.*router/)).toBeInTheDocument();
-    expect(screen.getByText("2026-06-01")).toBeInTheDocument();
+    expect(screen.getByText("Create haiku-router agent")).toBeInTheDocument();
+    expect(screen.getByText("1 Jun")).toBeInTheDocument();
+  });
+
+  it("does not render a marker pill when the marker's week isn't in the visible range", () => {
+    const weeks = [week({ week: "2026-06-01", week_label: "1 Jun", total_usd: 10, efficient_usd: 10 })];
+    render(
+      <AvoidableSpendChart
+        weeks={weeks}
+        markers={[{
+          kind: "claude_md", key: "some-finding", label: "Add to CLAUDE.md",
+          applied_at: "2026-05-01T10:00:00Z", week: "2026-05-01",
+        }]}
+      />,
+    );
+
+    expect(screen.queryByText("Add to CLAUDE.md")).not.toBeInTheDocument();
   });
 });

@@ -38,7 +38,7 @@ export default function CoachPage() {
             <h2>Spend over time</h2>
             <AvoidableSpendChart
               weeks={avoidable.data.weeks}
-              markers={[]}
+              markers={avoidable.data.markers}
             />
           </section>
 
