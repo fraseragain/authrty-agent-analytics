@@ -252,6 +252,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(coach_module, "claude_md_path", lambda: tmp_path / "claude-home" / "CLAUDE.md")
     monkeypatch.setattr(coach_module, "agents_dir", lambda: tmp_path / "claude-home" / "agents")
     monkeypatch.setattr(coach_module, "claude_settings_path", lambda: tmp_path / "claude-home" / "settings.json")
+    # Deliberately different from the write path above, to prove host_path
+    # comes from claude_home_display() and not from the actual I/O path.
+    monkeypatch.setattr(coach_module, "claude_home_display", lambda: Path("/host/.claude"))
     monkeypatch.setattr("ccfr.main.database_path", lambda: tmp_path / "startup.sqlite3")
 
     conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -282,6 +285,7 @@ def test_post_coach_action_create_agent(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["applied"] is True
+    assert body["host_path"] == "/host/.claude/agents/bash-verifier.md"
     assert (client.claude_home / "agents" / "bash-verifier.md").exists()  # type: ignore[attr-defined]
 
 
@@ -292,6 +296,7 @@ def test_post_coach_action_claude_md(client: TestClient) -> None:
     )
 
     assert resp.status_code == 200
+    assert resp.json()["host_path"] == "/host/.claude/CLAUDE.md"
     content = (client.claude_home / "CLAUDE.md").read_text(encoding="utf-8")  # type: ignore[attr-defined]
     assert "Add a bash-verifier subagent." in content
 
@@ -305,6 +310,7 @@ def test_post_coach_action_permission_allow(client: TestClient) -> None:
     resp = client.post("/api/coach/actions/permission_allow/WebSearch")
 
     assert resp.status_code == 200
+    assert resp.json()["host_path"] == "/host/.claude/settings.json"
     data = json.loads((client.claude_home / "settings.json").read_text(encoding="utf-8"))  # type: ignore[attr-defined]
     assert "WebSearch" in data["permissions"]["allow"]
 

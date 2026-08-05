@@ -26,6 +26,7 @@ from ccfr.api.schemas import (
 )
 from ccfr.config import (
     agents_dir,
+    claude_home_display,
     claude_md_path,
     claude_settings_path,
     pricing_dir,
@@ -972,17 +973,20 @@ def apply_action(kind: str, key: str, *, recommendation: str | None = None) -> C
         if not recommendation:
             raise ValueError("recommendation is required for claude_md actions")
         apply_claude_md_snippet(key, recommendation)
-        return CoachActionResult(applied=True, detail=f"Added to {claude_md_path()}")
+        host_path = str(claude_home_display() / "CLAUDE.md")
+        return CoachActionResult(applied=True, detail=f"Added to {claude_md_path()}", host_path=host_path)
     if kind == "create_agent":
         if key not in _AGENT_TEMPLATES:
             raise ValueError(f"Unknown agent template: {key}")
         dest = create_agent(key, agents_dir())
-        return CoachActionResult(applied=True, detail=f"Created {dest}")
+        host_path = str(claude_home_display() / "agents" / f"{key}.md")
+        return CoachActionResult(applied=True, detail=f"Created {dest}", host_path=host_path)
     if kind == "permission_allow":
         if key not in _KNOWN_PERMISSION_TOOLS:
             raise ValueError(f"Unknown permission tool: {key}")
         apply_permission_allow(key)
-        return CoachActionResult(applied=True, detail=f"Added {key} to permissions.allow")
+        host_path = str(claude_home_display() / "settings.json")
+        return CoachActionResult(applied=True, detail=f"Added {key} to permissions.allow", host_path=host_path)
     raise ValueError(f"Unknown action kind: {kind}")
 
 

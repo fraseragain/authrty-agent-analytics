@@ -110,6 +110,20 @@ def claude_settings_path() -> Path:
     return claude_home() / "settings.json"
 
 
+def claude_home_display() -> Path:
+    """Host-real path to claude_home(), for building an openable file:// link.
+
+    Reads and writes always go through claude_home() -- this is only for
+    telling the browser where the file actually is on the host. In Docker,
+    claude_home() resolves to a container-internal mount point (/claude-home)
+    that means nothing on the host filesystem the browser runs against;
+    CCFR_CLAUDE_HOME_DISPLAY carries the real host path across that boundary.
+    Outside Docker the two are the same, so this defaults to claude_home().
+    """
+    override = os.getenv("CCFR_CLAUDE_HOME_DISPLAY")
+    return Path(override) if override else claude_home()
+
+
 def resolve_within_claude_home(candidate: str | None, root: Path | None = None) -> Path:
     """Resolve a request-supplied path, confining it to claude_home().
 

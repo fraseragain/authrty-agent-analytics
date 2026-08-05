@@ -902,6 +902,7 @@ class CoachPatternsResponse(BaseModel):
 class CoachActionResult(BaseModel):
     applied: bool
     detail: str
+    host_path: str | None = None
 
 
 class CoachActionRequest(BaseModel):
