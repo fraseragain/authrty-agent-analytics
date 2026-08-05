@@ -872,6 +872,13 @@ class CoachAvoidableResponse(BaseModel):
     summary: CoachSummary = Field(default_factory=CoachSummary)
 
 
+class CoachAction(BaseModel):
+    kind: str  # "claude_md" | "create_agent" | "permission_allow"
+    key: str
+    label: str
+    applied: bool = False
+
+
 class CoachFinding(BaseModel):
     title: str
     body: str
@@ -883,9 +890,25 @@ class CoachFinding(BaseModel):
     skill_key: str | None = None
     source: str  # "risk_patterns" | "heuristic" | "workflow"
     last_seen_at: str | None = None
+    actions: list[CoachAction] = Field(default_factory=list)
 
 
 class CoachPatternsResponse(BaseModel):
     findings: list[CoachFinding] = Field(default_factory=list)
     total_session_count: int = 0
     weeks: int = 12
+
+
+class CoachActionResult(BaseModel):
+    applied: bool
+    detail: str
+
+
+class CoachActionRequest(BaseModel):
+    """Body for POST /api/coach/actions/{kind}/{key}.
+
+    recommendation is only required for kind="claude_md" -- the route has no
+    other way to recover a finding's recommendation text, since actions are
+    derived on the fly rather than looked up from a stored table.
+    """
+    recommendation: str | None = None

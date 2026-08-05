@@ -88,6 +88,43 @@ def resolve_within_import_root(candidate: str | None, root: Path | None = None) 
     return path
 
 
+def claude_home() -> Path:
+    """Root of the user's real Claude Code config (agents, CLAUDE.md, settings.json).
+
+    Distinct from import_root(), which is scoped to a read-only projects/
+    export. Coach's apply-fix actions write here, so CCFR_CLAUDE_HOME lets
+    Docker mount it read-write separately from the read-only import mount.
+    """
+    return Path(os.getenv("CCFR_CLAUDE_HOME", str(Path.home() / ".claude")))
+
+
+def agents_dir() -> Path:
+    return claude_home() / "agents"
+
+
+def claude_md_path() -> Path:
+    return claude_home() / "CLAUDE.md"
+
+
+def claude_settings_path() -> Path:
+    return claude_home() / "settings.json"
+
+
+def resolve_within_claude_home(candidate: str | None, root: Path | None = None) -> Path:
+    """Resolve a request-supplied path, confining it to claude_home().
+
+    Mirrors resolve_within_import_root() -- same confinement pattern, applied
+    to the write side instead of the read side.
+    """
+    base = (root if root is not None else claude_home()).resolve()
+    if not candidate:
+        return base
+    path = Path(candidate).resolve()
+    if path != base and not path.is_relative_to(base):
+        raise ValueError("path must be within the Claude home directory")
+    return path
+
+
 def resolve_within_team_bundle_root(candidate: str | None, root: Path | None = None) -> Path:
     """Resolve a request-supplied team bundle path, confining it to the team bundle root."""
     base = (root if root is not None else team_bundle_root()).resolve()

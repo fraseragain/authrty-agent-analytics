@@ -1,24 +1,36 @@
-"""Coach analytics: avoidable spend breakdown and pattern discovery.
+"""Coach analytics: avoidable spend breakdown, pattern discovery, and fixes.
 
-Skill-file generation (writing real files to a skills/agents directory) is a
-later phase with its own scope and sign-off -- findings here are display-only.
+Every finding is display-only unless the user clicks its action button --
+apply_* functions below only ever run when POST /api/coach/actions is hit.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import sqlite3
+import tempfile
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from ccfr.analysis.pricing import TokenBreakdown, cost_usd, load_price_timeline, match_price
 from ccfr.api.schemas import (
+    CoachAction,
+    CoachActionResult,
     CoachAvoidableResponse,
     CoachFinding,
     CoachPatternsResponse,
     CoachSummary,
     CoachWeek,
 )
-from ccfr.config import pricing_dir, pricing_path
+from ccfr.config import (
+    agents_dir,
+    claude_md_path,
+    claude_settings_path,
+    pricing_dir,
+    pricing_path,
+)
 
 
 _CATEGORY_COLUMNS = {
@@ -371,6 +383,252 @@ _ERROR_PATTERNS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Apply-fix actions: agent files, CLAUDE.md snippets, permission allow-list
+# entries. Every write here only happens when the user clicks a button --
+# _build_actions() below only ever *offers* an action, never applies one.
+# ---------------------------------------------------------------------------
+
+_AGENT_TEMPLATES: dict[str, str] = {
+    "bash-verifier": """\
+---
+name: bash-verifier
+description: Verify bash commands to break repetition loops. Use when the same Bash command keeps failing or repeating.
+tools: [Bash]
+model: claude-haiku-4-5-20251001
+---
+
+You are a bash verification specialist. Given a shell command that has been failing or repeating:
+
+1. Analyse the command syntax and common failure modes (wrong path, missing quotes, incorrect flags)
+2. Run the command and check the output
+3. Return a clear PASS/FAIL verdict with one sentence of explanation
+
+Be concise. PASS or FAIL, then the fix if needed.
+""",
+    "research-agent": """\
+---
+name: research-agent
+description: Cost-efficient web research using Haiku. Delegate any task where >75% of the work is WebSearch.
+tools: [WebSearch, WebFetch]
+model: claude-haiku-4-5-20251001
+---
+
+You are a focused web research agent. Given a research question:
+
+1. Search for relevant information with WebSearch
+2. Fetch key pages if detail is needed
+3. Return a concise, factual summary with sources
+
+Return only what was asked. Be brief.
+""",
+    "gh-context": """\
+---
+name: gh-context
+description: Pre-fetch GitHub issue/PR context to avoid Pro plan and rate-limit errors. Run at session start for any GitHub task.
+tools: [Bash]
+model: claude-haiku-4-5-20251001
+---
+
+You are a GitHub context fetcher. Given a GitHub issue URL, PR number, or repo reference:
+
+1. Use `gh` CLI to fetch issue/PR details (title, body, labels, status, recent comments)
+2. Return structured context the main session can use directly
+3. Flag any access errors clearly (rate limit, auth, Pro plan requirement)
+
+Return clean structured context, not raw JSON.
+""",
+    "session-bootstrap": """\
+---
+name: session-bootstrap
+description: Gather recurring session-start context once via a cheap Haiku agent. Use at the start of sessions that always fetch the same project context.
+tools: [Bash, Read]
+model: claude-haiku-4-5-20251001
+---
+
+You are a session initialisation agent. Quickly gather project context:
+
+1. Current git branch and last 3 commits
+2. Contents of CLAUDE.md if present
+3. Any .env.example or README headlines
+
+Return a compact bullet-point context summary. Be brief.
+""",
+    "verify-agent": """\
+---
+name: verify-agent
+description: Independent post-implementation verification. Use after code changes to verify correctness without contaminating the main context.
+tools: [Bash, Read]
+model: claude-haiku-4-5-20251001
+---
+
+You are an independent verification specialist. Given a description of code changes:
+
+1. Read the changed files
+2. Run tests or linting if available
+3. Check for obvious errors, regressions, or missing edge cases
+4. Return PASS or FAIL with specifics
+
+Be thorough. Only flag real issues, not style preferences.
+""",
+}
+
+# Tool names Coach knows how to pre-authorise. A finding offers the
+# permission_allow action whenever one of these appears in its own title,
+# body, or recommendation text -- not a per-finding rule.
+_KNOWN_PERMISSION_TOOLS = ["WebSearch", "WebFetch"]
+
+_CLAUDE_MD_HEADING = "## Coach suggestions"
+
+
+def _slug(title: str) -> str:
+    """Stable key for CLAUDE.md markers -- also used as the frontend list key."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "finding"
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    """Write via temp-file-then-rename so a mid-write crash can't corrupt the target."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
+def create_agent(key: str, agents_dir_path: Path) -> Path:
+    """Write the agent template file for the given skill key. Returns the created path."""
+    template = _AGENT_TEMPLATES.get(key)
+    if template is None:
+        raise KeyError(f"Unknown skill key: {key}")
+    dest = agents_dir_path / f"{key}.md"
+    _write_text_atomic(dest, template)
+    return dest
+
+
+def _claude_md_marker(key: str) -> str:
+    return f"<!-- coach:{key} -->"
+
+
+def _claude_md_marker_present(key: str, path: Path | None = None) -> bool:
+    md_path = path if path is not None else claude_md_path()
+    if not md_path.exists():
+        return False
+    return _claude_md_marker(key) in md_path.read_text(encoding="utf-8")
+
+
+def apply_claude_md_snippet(key: str, recommendation: str, path: Path | None = None) -> None:
+    """Append `recommendation` under a '## Coach suggestions' heading, once.
+
+    Idempotent: a `<!-- coach:<key> -->` marker records that this finding's
+    suggestion has already been applied, so re-clicking is a no-op.
+    """
+    md_path = path if path is not None else claude_md_path()
+    marker = _claude_md_marker(key)
+    existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    if marker in existing:
+        return
+
+    snippet = f"- {recommendation} {marker}\n"
+    if _CLAUDE_MD_HEADING in existing:
+        content = existing.rstrip("\n") + "\n" + snippet
+    else:
+        separator = "\n\n" if existing and not existing.endswith("\n\n") else ""
+        if existing and not existing.endswith("\n"):
+            separator = "\n" + separator
+        content = existing + separator + f"{_CLAUDE_MD_HEADING}\n\n{snippet}"
+    _write_text_atomic(md_path, content)
+
+
+def _tool_in_allow_list(tool: str, path: Path | None = None) -> bool:
+    settings_path = path if path is not None else claude_settings_path()
+    if not settings_path.exists():
+        return False
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    allow = data.get("permissions", {}).get("allow", [])
+    return tool in allow
+
+
+def apply_permission_allow(tool: str, path: Path | None = None) -> None:
+    """Add `tool` to permissions.allow, preserving every other key. Idempotent."""
+    settings_path = path if path is not None else claude_settings_path()
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    permissions = data.setdefault("permissions", {})
+    if not isinstance(permissions, dict):
+        permissions = {}
+        data["permissions"] = permissions
+    allow = permissions.setdefault("allow", [])
+    if not isinstance(allow, list):
+        allow = []
+        permissions["allow"] = allow
+
+    if tool not in allow:
+        allow.append(tool)
+        _write_text_atomic(settings_path, json.dumps(data, indent=2) + "\n")
+
+
+def _build_actions(
+    finding_key: str,
+    *,
+    skill_key: str | None,
+    recommendation: str,
+    title: str,
+    body: str,
+) -> list[CoachAction]:
+    """Derive available fix actions from data every finding already carries.
+
+    No per-finding-title table: every finding gets the CLAUDE.md action
+    (its recommendation is already written as evergreen advice), create_agent
+    appears only when skill_key names a template we actually have, and
+    permission_allow appears only when the finding's own text names a known
+    permission-gated tool.
+    """
+    actions = [
+        CoachAction(
+            kind="claude_md",
+            key=finding_key,
+            label="Add to CLAUDE.md",
+            applied=_claude_md_marker_present(finding_key),
+        ),
+    ]
+
+    if skill_key and skill_key in _AGENT_TEMPLATES:
+        actions.append(CoachAction(
+            kind="create_agent",
+            key=skill_key,
+            label=f"Create {skill_key} agent",
+            applied=(agents_dir() / f"{skill_key}.md").exists(),
+        ))
+
+    haystack = f"{title} {body} {recommendation}".lower()
+    for tool in _KNOWN_PERMISSION_TOOLS:
+        if tool.lower() in haystack:
+            actions.append(CoachAction(
+                kind="permission_allow",
+                key=tool,
+                label=f"Allow {tool} without prompting",
+                applied=_tool_in_allow_list(tool),
+            ))
+
+    return actions
+
+
 def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFinding]:
     """Error-signature matching plus coarse session/project heuristics.
 
@@ -407,9 +665,11 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         if session_count < 2:
             continue
         last_seen = max((r["last_seen"] for r in rows if r["last_seen"]), default=None)
+        title = pat["title"]
+        body = pat["body"].format(sessions=session_count, occurrences=occurrence_count)
         findings.append(CoachFinding(
-            title=pat["title"],
-            body=pat["body"].format(sessions=session_count, occurrences=occurrence_count),
+            title=title,
+            body=body,
             recommendation=pat["recommendation"],
             metric=f"{occurrence_count}× across {session_count} sessions",
             severity=pat["severity"],
@@ -418,6 +678,13 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             skill_key=pat.get("skill_key"),
             source="heuristic",
             last_seen_at=last_seen,
+            actions=_build_actions(
+                _slug(title),
+                skill_key=pat.get("skill_key"),
+                recommendation=pat["recommendation"],
+                title=title,
+                body=body,
+            ),
         ))
 
     findings.sort(key=lambda f: f.occurrence_count, reverse=True)
@@ -450,21 +717,27 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         if top_n <= max(1, len(error_rows) // 3) and top_n <= 5:
             pct = int(running / total_errors * 100)
             last_seen = max((r["last_seen"] for r in top_rows if r["last_seen"]), default=None)
+            title = "Error concentration"
+            body = (
+                f"Just {top_n} session{'s' if top_n > 1 else ''} account for {pct}% "
+                f"of all {total_errors} tool errors. "
+                f"These sessions had {running} errors between them — "
+                f"the rest of your sessions are relatively clean."
+            )
+            recommendation = "Investigate these specific sessions to find the root cause. A single fix could eliminate most of your error retry cost."
             findings.append(CoachFinding(
-                title="Error concentration",
-                body=(
-                    f"Just {top_n} session{'s' if top_n > 1 else ''} account for {pct}% "
-                    f"of all {total_errors} tool errors. "
-                    f"These sessions had {running} errors between them — "
-                    f"the rest of your sessions are relatively clean."
-                ),
-                recommendation="Investigate these specific sessions to find the root cause. A single fix could eliminate most of your error retry cost.",
+                title=title,
+                body=body,
+                recommendation=recommendation,
                 metric=f"{top_n} sessions · {pct}% of errors",
                 severity="warning",
                 session_count=top_n,
                 occurrence_count=running,
                 source="heuristic",
                 last_seen_at=last_seen,
+                actions=_build_actions(
+                    _slug(title), skill_key=None, recommendation=recommendation, title=title, body=body,
+                ),
             ))
 
     # --- deep loop sessions ---
@@ -480,19 +753,25 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
 
     if deep and int(deep["n"]) >= 2:
         n = int(deep["n"])
+        title = "Deep loop sessions"
+        body = (
+            f"{n} sessions repeated the same tool call 8 or more times consecutively. "
+            f"These are the primary driver of loop waste — each run past the first is a wasted token spend."
+        )
+        recommendation = "A bash-verifier subagent that checks the output after each Bash call would break these loops early."
         findings.append(CoachFinding(
-            title="Deep loop sessions",
-            body=(
-                f"{n} sessions repeated the same tool call 8 or more times consecutively. "
-                f"These are the primary driver of loop waste — each run past the first is a wasted token spend."
-            ),
-            recommendation="A bash-verifier subagent that checks the output after each Bash call would break these loops early.",
+            title=title,
+            body=body,
+            recommendation=recommendation,
             metric=f"{n} sessions",
             severity="warning",
             session_count=n,
             skill_key="bash-verifier",
             source="heuristic",
             last_seen_at=deep["last_seen"],
+            actions=_build_actions(
+                _slug(title), skill_key="bash-verifier", recommendation=recommendation, title=title, body=body,
+            ),
         ))
 
     # --- project efficiency hotspot ---
@@ -527,22 +806,28 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         best_rate = _loop_rate(best)
 
         if worst_rate > best_rate * 2 and worst_rate > 0.02:
+            title = "Project loop hotspot"
+            body = (
+                f'"{_proj_name(worst["cwd"])}" has a loop rate of {worst_rate*100:.1f}% '
+                f'across {int(worst["session_count"])} sessions — '
+                f'{worst_rate / max(best_rate, 0.001):.1f}× higher than '
+                f'"{_proj_name(best["cwd"])}" ({best_rate*100:.1f}%). '
+                f"This project is driving a disproportionate share of loop waste."
+            )
+            recommendation = "Look for a repeating pattern specific to this project — a failing test, a tool that always needs retrying, or a prompt that reliably causes loops."
             findings.append(CoachFinding(
-                title="Project loop hotspot",
-                body=(
-                    f'"{_proj_name(worst["cwd"])}" has a loop rate of {worst_rate*100:.1f}% '
-                    f'across {int(worst["session_count"])} sessions — '
-                    f'{worst_rate / max(best_rate, 0.001):.1f}× higher than '
-                    f'"{_proj_name(best["cwd"])}" ({best_rate*100:.1f}%). '
-                    f"This project is driving a disproportionate share of loop waste."
-                ),
-                recommendation="Look for a repeating pattern specific to this project — a failing test, a tool that always needs retrying, or a prompt that reliably causes loops.",
+                title=title,
+                body=body,
+                recommendation=recommendation,
                 metric=f'{_proj_name(worst["cwd"])} · {worst_rate*100:.1f}% loop rate',
                 severity="info",
                 session_count=int(worst["session_count"]),
                 skill_key="bash-verifier",
                 source="heuristic",
                 last_seen_at=worst["last_seen"],
+                actions=_build_actions(
+                    _slug(title), skill_key="bash-verifier", recommendation=recommendation, title=title, body=body,
+                ),
             ))
 
     return findings
@@ -578,20 +863,26 @@ def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int 
         session_count = int(row["session_count"])
         occurrence_count = int(row["occurrence_count"])
         category = (row["category"] or "risk").replace("_", " ")
-        title = row["title"] or "Recurring finding"
+        raw_title = row["title"] or "Recurring finding"
+        title = f"Recurring finding: {category.title()} · {raw_title}"
+        body = (
+            f"This risk finding appears in {session_count} sessions "
+            f"({occurrence_count} times) over the selected window."
+        )
+        recommendation = "Review these sessions for a shared root cause — a flaky test, a tool that regularly needs retrying, or a prompt pattern that reliably triggers this."
         findings.append(CoachFinding(
-            title=f"Recurring finding: {category.title()} · {title}",
-            body=(
-                f"This risk finding appears in {session_count} sessions "
-                f"({occurrence_count} times) over the selected window."
-            ),
-            recommendation="Review these sessions for a shared root cause — a flaky test, a tool that regularly needs retrying, or a prompt pattern that reliably triggers this.",
+            title=title,
+            body=body,
+            recommendation=recommendation,
             metric=f"{session_count} sessions",
             severity="warning" if int(row["severity_rank"]) >= 2 else "info",
             session_count=session_count,
             occurrence_count=occurrence_count,
             source="risk_patterns",
             last_seen_at=row["last_seen"],
+            actions=_build_actions(
+                _slug(title), skill_key=None, recommendation=recommendation, title=title, body=body,
+            ),
         ))
     return findings
 
@@ -648,20 +939,51 @@ def _workflow_findings(
             f"SELECT MAX(COALESCE(last_ts, first_ts)) FROM sessions WHERE id IN ({placeholders})",
             tuple(session_ids),
         ).fetchone()[0]
+        title = f"Repeated workflow: {label}"
+        body = f"This exact sequence of tool calls appears in {len(session_ids)} different sessions."
+        recommendation = "Consider a skill or agent that automates this sequence end-to-end."
         findings.append(CoachFinding(
-            title=f"Repeated workflow: {label}",
-            body=f"This exact sequence of tool calls appears in {len(session_ids)} different sessions.",
-            recommendation="Consider a skill or agent that automates this sequence end-to-end.",
+            title=title,
+            body=body,
+            recommendation=recommendation,
             metric=f"{len(session_ids)} sessions",
             severity="info",
             session_count=len(session_ids),
             occurrence_count=len(session_ids),
             source="workflow",
             last_seen_at=last_seen,
+            actions=_build_actions(
+                _slug(title), skill_key=None, recommendation=recommendation, title=title, body=body,
+            ),
         ))
         if len(findings) >= limit:
             break
     return findings
+
+
+def apply_action(kind: str, key: str, *, recommendation: str | None = None) -> CoachActionResult:
+    """Dispatch a POST /api/coach/actions/{kind}/{key} request to the right apply_*.
+
+    `recommendation` is only required for kind="claude_md" -- the route has no
+    other way to recover the finding's recommendation text, since actions are
+    derived on the fly rather than looked up from a stored table.
+    """
+    if kind == "claude_md":
+        if not recommendation:
+            raise ValueError("recommendation is required for claude_md actions")
+        apply_claude_md_snippet(key, recommendation)
+        return CoachActionResult(applied=True, detail=f"Added to {claude_md_path()}")
+    if kind == "create_agent":
+        if key not in _AGENT_TEMPLATES:
+            raise ValueError(f"Unknown agent template: {key}")
+        dest = create_agent(key, agents_dir())
+        return CoachActionResult(applied=True, detail=f"Created {dest}")
+    if kind == "permission_allow":
+        if key not in _KNOWN_PERMISSION_TOOLS:
+            raise ValueError(f"Unknown permission tool: {key}")
+        apply_permission_allow(key)
+        return CoachActionResult(applied=True, detail=f"Added {key} to permissions.allow")
+    raise ValueError(f"Unknown action kind: {kind}")
 
 
 def pattern_analysis(conn: sqlite3.Connection, *, weeks: int = 12) -> CoachPatternsResponse:

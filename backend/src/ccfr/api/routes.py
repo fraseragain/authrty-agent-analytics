@@ -47,6 +47,8 @@ from ccfr.api.schemas import (
     EventDetail,
     ImportProgressResponse,
     ImportRequest,
+    CoachActionRequest,
+    CoachActionResult,
     CoachAvoidableResponse,
     CoachPatternsResponse,
     ImportSummaryResponse,
@@ -696,3 +698,11 @@ def get_coach_patterns(
     conn: Connection = Depends(get_db),
 ) -> CoachPatternsResponse:
     return coach_module.pattern_analysis(conn, weeks=weeks)
+
+
+@router.post("/coach/actions/{kind}/{key}", response_model=CoachActionResult)
+def post_coach_action(kind: str, key: str, body: CoachActionRequest = CoachActionRequest()) -> CoachActionResult:
+    try:
+        return coach_module.apply_action(kind, key, recommendation=body.recommendation)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
