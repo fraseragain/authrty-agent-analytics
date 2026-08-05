@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import type React from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import PatternDiscovery from "./PatternDiscovery";
 import type { CoachFinding, CoachPatternsResponse } from "../api/types";
+import * as client from "../api/client";
 
 function finding(partial: Partial<CoachFinding> = {}): CoachFinding {
   return {
@@ -15,8 +18,14 @@ function finding(partial: Partial<CoachFinding> = {}): CoachFinding {
     skill_key: null,
     source: "heuristic",
     last_seen_at: null,
+    actions: [],
     ...partial,
   };
+}
+
+function renderWithClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
 }
 
 function response(findings: CoachFinding[], partial: Partial<CoachPatternsResponse> = {}): CoachPatternsResponse {
@@ -27,38 +36,111 @@ function cardFor(title: string): HTMLElement {
   return screen.getByText(title).closest(".pd-card") as HTMLElement;
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("PatternDiscovery", () => {
   it("shows an empty state when there are no findings", () => {
-    render(<PatternDiscovery data={response([])} />);
+    renderWithClient(<PatternDiscovery data={response([])} />);
     expect(screen.getByText(/No recurring patterns detected yet/)).toBeInTheDocument();
   });
 
   it("renders the subtitle with counts", () => {
-    render(<PatternDiscovery data={response([finding()], { total_session_count: 8, weeks: 6 })} />);
+    renderWithClient(<PatternDiscovery data={response([finding()], { total_session_count: 8, weeks: 6 })} />);
     expect(screen.getByText("1 pattern detected across 8 sessions over the last 6 weeks.")).toBeInTheDocument();
   });
 
   it("pluralizes the subtitle for multiple findings", () => {
-    render(<PatternDiscovery data={response([finding(), finding({ title: "Other" })])} />);
+    renderWithClient(<PatternDiscovery data={response([finding(), finding({ title: "Other" })])} />);
     expect(screen.getByText(/^2 patterns detected/)).toBeInTheDocument();
   });
 
   it("renders each finding's title, metric, body, and recommendation", () => {
-    render(<PatternDiscovery data={response([finding()])} />);
+    renderWithClient(<PatternDiscovery data={response([finding()])} />);
     expect(screen.getByText("Deep loop sessions")).toBeInTheDocument();
     expect(screen.getByText("2 sessions")).toBeInTheDocument();
     expect(screen.getByText("2 sessions looped a lot.")).toBeInTheDocument();
     expect(screen.getByText("Add a bash-verifier subagent.")).toBeInTheDocument();
   });
 
-  it("does not render a create-skill button (display-only this phase)", () => {
-    render(<PatternDiscovery data={response([finding({ skill_key: "bash-verifier" })])} />);
-    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+  it("renders no action buttons when a finding has no actions", () => {
+    renderWithClient(<PatternDiscovery data={response([finding({ actions: [] })])} />);
+    const card = cardFor("Deep loop sessions");
+    expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("renders one button per action, using the backend-supplied label", () => {
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [
+              { kind: "claude_md", key: "deep-loop-sessions", label: "Add to CLAUDE.md", applied: false },
+              { kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false },
+            ],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    expect(within(card).getByRole("button", { name: "Add to CLAUDE.md" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Create bash-verifier agent" })).toBeInTheDocument();
+  });
+
+  it("shows an already-applied action as disabled with an Applied checkmark", () => {
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "permission_allow", key: "WebSearch", label: "Allow WebSearch without prompting", applied: true }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    const button = within(card).getByRole("button", { name: "Applied ✓" });
+    expect(button).toBeDisabled();
+  });
+
+  it("clicking an action button calls the endpoint and flips to Applied on success", async () => {
+    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            actions: [{ kind: "create_agent", key: "bash-verifier", label: "Create bash-verifier agent", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Create bash-verifier agent" }));
+
+    await waitFor(() => expect(applySpy).toHaveBeenCalledWith("create_agent", "bash-verifier", undefined));
+  });
+
+  it("passes the finding's recommendation text when applying a claude_md action", async () => {
+    const applySpy = vi.spyOn(client, "applyCoachAction").mockResolvedValue({ applied: true, detail: "ok" });
+    renderWithClient(
+      <PatternDiscovery
+        data={response([
+          finding({
+            recommendation: "Add a bash-verifier subagent.",
+            actions: [{ kind: "claude_md", key: "deep-loop-sessions", label: "Add to CLAUDE.md", applied: false }],
+          }),
+        ])}
+      />,
+    );
+    const card = cardFor("Deep loop sessions");
+    fireEvent.click(within(card).getByRole("button", { name: "Add to CLAUDE.md" }));
+
+    await waitFor(() =>
+      expect(applySpy).toHaveBeenCalledWith("claude_md", "deep-loop-sessions", "Add a bash-verifier subagent."),
+    );
   });
 
   it("shows the last-seen date as a column on the card", () => {
     const lastSeen = "2026-06-03T10:00:00Z";
-    render(<PatternDiscovery data={response([finding({ last_seen_at: lastSeen })])} />);
+    renderWithClient(<PatternDiscovery data={response([finding({ last_seen_at: lastSeen })])} />);
     const card = cardFor("Deep loop sessions");
     const timestamp = within(card).getByText(
       new Date(lastSeen).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
@@ -67,7 +149,7 @@ describe("PatternDiscovery", () => {
   });
 
   it("shows a dash in the last-seen column when the backend doesn't provide one", () => {
-    render(<PatternDiscovery data={response([finding({ last_seen_at: null })])} />);
+    renderWithClient(<PatternDiscovery data={response([finding({ last_seen_at: null })])} />);
     const card = cardFor("Deep loop sessions");
     expect(within(card).getByText("—")).toBeInTheDocument();
   });
@@ -78,7 +160,7 @@ describe("PatternDiscovery", () => {
       finding({ title: "undated", last_seen_at: null }),
       finding({ title: "newer", last_seen_at: "2026-06-03T00:00:00Z" }),
     ];
-    render(<PatternDiscovery data={response(findings)} />);
+    renderWithClient(<PatternDiscovery data={response(findings)} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Last seen/i }));
 
@@ -91,7 +173,7 @@ describe("PatternDiscovery", () => {
       finding({ title: "older", last_seen_at: "2026-06-01T00:00:00Z" }),
       finding({ title: "newer", last_seen_at: "2026-06-03T00:00:00Z" }),
     ];
-    render(<PatternDiscovery data={response(findings)} />);
+    renderWithClient(<PatternDiscovery data={response(findings)} />);
 
     const sortButton = screen.getByRole("button", { name: /Last seen/i });
     fireEvent.click(sortButton);
