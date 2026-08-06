@@ -876,6 +876,7 @@ export interface CoachWeek {
   week: string;
   week_label: string;
   total_usd: number;
+  total_tokens: number;
   efficient_usd: number;
   loop_waste_usd: number;
   error_retry_usd: number;
@@ -889,6 +890,7 @@ export interface CoachWeek {
 
 export interface CoachSummary {
   total_usd: number;
+  total_tokens: number;
   avoidable_usd: number;
   avoidable_pct: number;
   loop_waste_usd: number;
@@ -898,12 +900,27 @@ export interface CoachSummary {
   vs_prev_period_pct: number | null;
 }
 
+export interface CoachActionImpact {
+  window_days: number;
+  before_days: number;
+  after_days: number;
+  sufficient_data: boolean;
+  before_total_usd: number;
+  after_total_usd: number;
+  before_avoidable_usd: number;
+  after_avoidable_usd: number;
+  before_avoidable_pct: number;
+  after_avoidable_pct: number;
+  confounded: boolean;
+}
+
 export interface CoachActionMarker {
   kind: string;
   key: string;
   label: string;
   applied_at: string;
   week: string;
+  impact: CoachActionImpact;
 }
 
 export interface CoachAvoidableResponse {
@@ -927,6 +944,7 @@ export interface CoachFinding {
   severity: string; // "warning" | "info"
   session_count: number;
   occurrence_count: number;
+  estimated_cost_usd: number | null;
   skill_key: string | null;
   source: string; // "risk_patterns" | "heuristic" | "workflow"
   last_seen_at: string | null;

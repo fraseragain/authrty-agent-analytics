@@ -1,19 +1,30 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getCoachAvoidable, getCoachPatterns } from "../api/client";
 import CoachKpiRow from "./CoachKpiRow";
 import AvoidableSpendChart from "./AvoidableSpendChart";
 import AvoidableBreakdown from "./AvoidableBreakdown";
 import PatternDiscovery from "./PatternDiscovery";
+import CoachActionImpactList from "./CoachActionImpactList";
 import LoadingBar from "../components/LoadingBar";
 
+const PERIOD_OPTIONS = [
+  { weeks: 4, label: "4 weeks" },
+  { weeks: 12, label: "12 weeks" },
+  { weeks: 26, label: "26 weeks" },
+  { weeks: 52, label: "52 weeks" },
+];
+
 export default function CoachPage() {
+  const [weeks, setWeeks] = useState(12);
+
   const avoidable = useQuery({
-    queryKey: ["coach-avoidable"],
-    queryFn: () => getCoachAvoidable(12),
+    queryKey: ["coach-avoidable", weeks],
+    queryFn: () => getCoachAvoidable(weeks),
   });
   const patterns = useQuery({
-    queryKey: ["coach-patterns"],
-    queryFn: () => getCoachPatterns(12),
+    queryKey: ["coach-patterns", weeks],
+    queryFn: () => getCoachPatterns(weeks),
   });
 
   return (
@@ -35,7 +46,20 @@ export default function CoachPage() {
       {avoidable.data && (
         <div className="coach-two-col">
           <section className="coach-tile">
-            <h2>Spend over time</h2>
+            <div className="coach-tile-header">
+              <h2>Spend over time</h2>
+              <div className="coach-chart-controls">
+                <select
+                  aria-label="Time period"
+                  value={weeks}
+                  onChange={(e) => setWeeks(Number(e.target.value))}
+                >
+                  {PERIOD_OPTIONS.map((p) => (
+                    <option key={p.weeks} value={p.weeks}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <AvoidableSpendChart
               weeks={avoidable.data.weeks}
               markers={avoidable.data.markers}
@@ -47,6 +71,13 @@ export default function CoachPage() {
             <AvoidableBreakdown summary={avoidable.data.summary} />
           </section>
         </div>
+      )}
+
+      {avoidable.data && (
+        <section className="coach-tile">
+          <h2>Action impact</h2>
+          <CoachActionImpactList markers={avoidable.data.markers} />
+        </section>
       )}
 
       <section className="coach-tile">

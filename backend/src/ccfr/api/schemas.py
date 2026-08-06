@@ -845,6 +845,7 @@ class CoachWeek(BaseModel):
     week: str
     week_label: str
     total_usd: float = 0.0
+    total_tokens: int = 0
     efficient_usd: float = 0.0
     loop_waste_usd: float = 0.0
     error_retry_usd: float = 0.0
@@ -858,13 +859,37 @@ class CoachWeek(BaseModel):
 
 class CoachSummary(BaseModel):
     total_usd: float = 0.0
+    total_tokens: int = 0
     avoidable_usd: float = 0.0
     avoidable_pct: float = 0.0
     loop_waste_usd: float = 0.0
     error_retry_usd: float = 0.0
     alerted_usd: float = 0.0
     model_overkill_usd: float = 0.0
+    # Percentage-point change in avoidable % (waste rate) between the first
+    # and second half of the window -- not a change in absolute spend.
     vs_prev_period_pct: float | None = None
+
+
+class CoachActionImpact(BaseModel):
+    """Before/after comparison of daily spend around an applied action.
+
+    Always populated (never None) -- callers gate display on `sufficient_data`
+    rather than on presence, so a "not enough data yet" state renders the same
+    shape as a real comparison.
+    """
+
+    window_days: int
+    before_days: int  # actual days of pre-window data available (<= window_days)
+    after_days: int  # actual days of post-window data available (<= window_days)
+    sufficient_data: bool
+    before_total_usd: float = 0.0
+    after_total_usd: float = 0.0
+    before_avoidable_usd: float = 0.0
+    after_avoidable_usd: float = 0.0
+    before_avoidable_pct: float = 0.0
+    after_avoidable_pct: float = 0.0
+    confounded: bool = False  # another action applied within window_days of this one
 
 
 class CoachActionMarker(BaseModel):
@@ -873,6 +898,7 @@ class CoachActionMarker(BaseModel):
     label: str
     applied_at: str
     week: str  # YYYY-MM-DD bucket, matches CoachWeek.week for chart alignment
+    impact: CoachActionImpact
 
 
 class CoachAvoidableResponse(BaseModel):
@@ -896,6 +922,7 @@ class CoachFinding(BaseModel):
     severity: str  # "warning" | "info"
     session_count: int = 0
     occurrence_count: int = 0
+    estimated_cost_usd: float | None = None
     skill_key: str | None = None
     source: str  # "risk_patterns" | "heuristic" | "workflow"
     last_seen_at: str | None = None

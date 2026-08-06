@@ -6,8 +6,12 @@ import type { CoachSummary } from "../api/types";
 function summary(partial: Partial<CoachSummary> = {}): CoachSummary {
   return {
     total_usd: 100,
-    avoidable_usd: 25,
-    avoidable_pct: 25,
+    total_tokens: 0,
+    // avoidable_usd = loop_waste + error_retry + model_overkill only --
+    // alerted_usd is tracked separately (see "Investigate further" KPI),
+    // not folded into avoidable.
+    avoidable_usd: 20,
+    avoidable_pct: 20,
     loop_waste_usd: 10,
     error_retry_usd: 5,
     alerted_usd: 5,
@@ -28,8 +32,8 @@ describe("AvoidableBreakdown", () => {
     expect(screen.getByText("Efficient spend")).toBeInTheDocument();
     expect(screen.getByText("Loop waste")).toBeInTheDocument();
     expect(screen.getByText("Error retries")).toBeInTheDocument();
-    expect(screen.getByText("Alerted sessions")).toBeInTheDocument();
     expect(screen.getByText("Model overkill")).toBeInTheDocument();
+    expect(screen.queryByText("Alerted sessions")).not.toBeInTheDocument();
     expect(screen.getByText("$100.00")).toBeInTheDocument();
   });
 

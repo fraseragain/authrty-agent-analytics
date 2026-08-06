@@ -15,8 +15,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from ccfr.analysis.pricing import TokenBreakdown, cost_usd, load_price_timeline, match_price
+from ccfr.api.repository import session_cost_map
 from ccfr.api.schemas import (
     CoachAction,
+    CoachActionImpact,
     CoachActionMarker,
     CoachActionResult,
     CoachAvoidableResponse,
@@ -46,6 +48,12 @@ _CATEGORIES = tuple(_CATEGORY_COLUMNS)
 
 _LOOP_REPEAT_THRESHOLD = 5
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+# Intervention-impact comparison window: how many days on either side of an
+# applied action to sum for the before/after comparison, and the minimum
+# number of real (in-range) days required on each side to trust the result.
+_IMPACT_WINDOW_DAYS = 7
+_MIN_IMPACT_DAYS = 3
 
 
 def _day_label(date_key: str) -> str:
@@ -93,15 +101,51 @@ def _error_retry_counts(conn: sqlite3.Connection, cutoff: str) -> dict[int, int]
     return {int(r["session_id"]): int(r["error_count"]) for r in rows}
 
 
+def _tool_call_counts(conn: sqlite3.Connection) -> dict[int, int]:
+    """tool_call_count per session, corpus-wide -- not cutoff-filtered, since
+    callers only ever look up session_ids they already know are in-window
+    from elsewhere (matches session_cost_map's same no-filter convention)."""
+    rows = conn.execute("SELECT session_id, tool_call_count FROM session_stats").fetchall()
+    return {int(r["session_id"]): int(r["tool_call_count"] or 0) for r in rows}
+
+
+def _occurrence_cost(
+    occurrences_by_session: dict[int, int],
+    *,
+    session_costs: dict[int, float],
+    tool_counts: dict[int, int],
+    has_prices: bool,
+) -> float | None:
+    """Estimated $ for a finding defined by a per-session occurrence count.
+
+    sum over sessions of (occurrences / tool_call_count) * session_cost --
+    avoidable_spend()'s error_retry/loop_waste formula, minus the day-fraction
+    since session_costs here is already each session's full-window total, not
+    a per-day slice. None (not 0.0) when pricing isn't configured, so the UI
+    can show "unknown" rather than implying zero cost.
+    """
+    if not has_prices:
+        return None
+    return sum(
+        (occ / max(tool_counts.get(sid, 0), 1)) * session_costs.get(sid, 0.0)
+        for sid, occ in occurrences_by_session.items()
+    )
+
+
 def avoidable_spend(
     conn: sqlite3.Connection,
     *,
     weeks: int = 12,
     historical: bool = False,
 ) -> CoachAvoidableResponse:
-    """Daily spend split into efficient vs. loop waste, error retries,
-    risk-flagged sessions, and model overkill (Sonnet/Opus subagent work
-    that would have sufficed on Haiku).
+    """Daily spend split into efficient vs. loop waste, error retries, and
+    model overkill (Sonnet/Opus subagent work that would have sufficed on
+    Haiku) -- confirmed waste categories that sum into avoidable_usd.
+
+    Risk-flagged ("alerted") session spend is tracked separately in
+    alerted_usd rather than folded into avoidable_usd: a risk flag means
+    "worth a human look", not "confirmed wasted" -- the two shouldn't be
+    conflated in the avoidable-spend figure.
 
     Despite the CoachWeek naming (kept for continuity with the recovered
     design), buckets are daily, not ISO weeks -- _fill_days walks every day
@@ -160,10 +204,14 @@ def avoidable_spend(
     # Accumulate per-(session, day) cost, keeping session-level waste metrics separate.
     session_day_costs: dict[tuple[int, str], float] = {}
     session_meta: dict[int, dict] = {}
+    # Token counts don't depend on pricing being available, so they're tallied
+    # unconditionally (unlike day_cost below, which needs a price match).
+    day_tokens: dict[str, int] = defaultdict(int)
 
     for row in rows:
         spk = int(row["session_pk"])
         day = row["event_day"] or ""
+        day_tokens[day] += sum(int(row[cat]) for cat in _CATEGORIES)
         if spk not in session_meta:
             session_meta[spk] = {
                 "loop_count": int(row["loop_count"] or 0),
@@ -199,6 +247,10 @@ def avoidable_spend(
         )
         for k in day_keys
     }
+    for day, tokens in day_tokens.items():
+        if day in week_map:
+            week_map[day].total_tokens += tokens
+
     # Track which sessions contributed to each day to avoid double-counting session_count.
     day_sessions: dict[str, set[int]] = {k: set() for k in day_keys}
 
@@ -217,9 +269,13 @@ def avoidable_spend(
         loop_waste = frac * (loop_count / tool_count) * session_total if max_repeat >= _LOOP_REPEAT_THRESHOLD else 0.0
         retry_count = error_retry_counts.get(spk, 0)
         error_retry = frac * (retry_count / tool_count) * session_total
+        # Alerted sessions are flagged for investigation, not confirmed waste
+        # -- tracked separately (alerted_usd) and deliberately left out of
+        # avoidable_usd/efficient_usd, unlike loop_waste/error_retry which
+        # are quantified waste.
         alerted = frac * (0.25 * session_total) if meta["alerted"] else 0.0
 
-        avoidable = loop_waste + error_retry + alerted
+        avoidable = loop_waste + error_retry
         efficient = max(day_cost - avoidable, 0.0)
 
         wk_obj = week_map[day]
@@ -281,6 +337,7 @@ def avoidable_spend(
     week_list = list(week_map.values())
 
     total_usd = sum(w.total_usd for w in week_list)
+    total_tokens = sum(w.total_tokens for w in week_list)
     avoidable_usd = sum(w.avoidable_usd for w in week_list)
     loop_waste_usd = sum(w.loop_waste_usd for w in week_list)
     error_retry_usd = sum(w.error_retry_usd for w in week_list)
@@ -289,16 +346,26 @@ def avoidable_spend(
 
     avoidable_pct = (avoidable_usd / total_usd * 100) if total_usd > 0 else 0.0
 
+    # vs_prev tracks the *waste rate* (avoidable %), not absolute spend --
+    # total spend naturally grows with usage, so a $ comparison mostly just
+    # reflects "did I use it more", not "did I get more efficient". Expressed
+    # as a percentage-point delta in avoidable_pct between the first and
+    # second half of the window.
     vs_prev = None
     if len(week_list) >= 4:
         mid = len(week_list) // 2
-        first_half = sum(w.total_usd for w in week_list[:mid])
-        second_half = sum(w.total_usd for w in week_list[mid:])
-        if first_half > 0:
-            vs_prev = (second_half - first_half) / first_half * 100
+        first_total = sum(w.total_usd for w in week_list[:mid])
+        second_total = sum(w.total_usd for w in week_list[mid:])
+        first_avoidable = sum(w.avoidable_usd for w in week_list[:mid])
+        second_avoidable = sum(w.avoidable_usd for w in week_list[mid:])
+        if first_total > 0:
+            first_pct = first_avoidable / first_total * 100
+            second_pct = (second_avoidable / second_total * 100) if second_total > 0 else 0.0
+            vs_prev = second_pct - first_pct
 
     summary = CoachSummary(
         total_usd=total_usd,
+        total_tokens=total_tokens,
         avoidable_usd=avoidable_usd,
         avoidable_pct=avoidable_pct,
         loop_waste_usd=loop_waste_usd,
@@ -308,7 +375,7 @@ def avoidable_spend(
         vs_prev_period_pct=vs_prev,
     )
 
-    markers = _load_action_markers(conn, start_date=start_date, end_date=today_str)
+    markers = _load_action_markers(conn, start_date=start_date, end_date=today_str, day_map=week_map)
 
     return CoachAvoidableResponse(weeks=week_list, summary=summary, markers=markers)
 
@@ -662,7 +729,14 @@ def _build_actions(
     return actions
 
 
-def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFinding]:
+def _heuristic_findings(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    *,
+    session_costs: dict[int, float],
+    tool_counts: dict[int, int],
+    has_prices: bool,
+) -> list[CoachFinding]:
     """Error-signature matching plus coarse session/project heuristics.
 
     Ported from the old (deleted, dangling-commit-recoverable) Efficiency
@@ -672,10 +746,12 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
     findings: list[CoachFinding] = []
 
     # --- error pattern clustering: known error signatures in tool_results ---
+    # session_id is in the GROUP BY (not just output_preview) so each matched
+    # pattern below can attribute its cost estimate to the specific sessions
+    # and occurrence counts it actually appears in, via _occurrence_cost.
     err_preview_rows = conn.execute(
         """
-        SELECT tr.output_preview,
-               COUNT(DISTINCT tr.session_id) AS session_count,
+        SELECT tr.output_preview, tr.session_id,
                COUNT(*) AS occurrence_count,
                MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
         FROM tool_results tr
@@ -684,7 +760,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
           AND tr.output_preview IS NOT NULL
           AND length(tr.output_preview) > 5
           AND s.first_ts >= ?
-        GROUP BY tr.output_preview
+        GROUP BY tr.output_preview, tr.session_id
         """,
         (cutoff,),
     ).fetchall()
@@ -693,8 +769,11 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
         rows = [r for r in err_preview_rows if pat["match"] in (r["output_preview"] or "")]
         if not rows:
             continue
-        session_count = sum(r["session_count"] for r in rows)
-        occurrence_count = sum(r["occurrence_count"] for r in rows)
+        occ_by_session: dict[int, int] = defaultdict(int)
+        for r in rows:
+            occ_by_session[int(r["session_id"])] += int(r["occurrence_count"])
+        session_count = len(occ_by_session)
+        occurrence_count = sum(occ_by_session.values())
         if session_count < 2:
             continue
         last_seen = max((r["last_seen"] for r in rows if r["last_seen"]), default=None)
@@ -708,6 +787,9 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             severity=pat["severity"],
             session_count=session_count,
             occurrence_count=occurrence_count,
+            estimated_cost_usd=_occurrence_cost(
+                occ_by_session, session_costs=session_costs, tool_counts=tool_counts, has_prices=has_prices,
+            ),
             skill_key=pat.get("skill_key"),
             source="heuristic",
             last_seen_at=last_seen,
@@ -758,6 +840,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 f"the rest of your sessions are relatively clean."
             )
             recommendation = "Investigate these specific sessions to find the root cause. A single fix could eliminate most of your error retry cost."
+            occ_by_session = {int(r["session_id"]): int(r["err_count"]) for r in top_rows}
             findings.append(CoachFinding(
                 title=title,
                 body=body,
@@ -766,6 +849,9 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 severity="warning",
                 session_count=top_n,
                 occurrence_count=running,
+                estimated_cost_usd=_occurrence_cost(
+                    occ_by_session, session_costs=session_costs, tool_counts=tool_counts, has_prices=has_prices,
+                ),
                 source="heuristic",
                 last_seen_at=last_seen,
                 actions=_build_actions(
@@ -774,24 +860,26 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             ))
 
     # --- deep loop sessions ---
-    deep = conn.execute(
+    deep_rows = conn.execute(
         """
-        SELECT COUNT(*) AS n, MAX(COALESCE(s.last_ts, s.first_ts)) AS last_seen
+        SELECT ss.session_id, ss.loop_count, COALESCE(s.last_ts, s.first_ts) AS last_seen
         FROM session_stats ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE ss.max_repeat >= 8 AND s.first_ts >= ?
         """,
         (cutoff,),
-    ).fetchone()
+    ).fetchall()
 
-    if deep and int(deep["n"]) >= 2:
-        n = int(deep["n"])
+    if len(deep_rows) >= 2:
+        n = len(deep_rows)
+        last_seen = max((r["last_seen"] for r in deep_rows if r["last_seen"]), default=None)
         title = "Deep loop sessions"
         body = (
             f"{n} sessions repeated the same tool call 8 or more times consecutively. "
             f"These are the primary driver of loop waste — each run past the first is a wasted token spend."
         )
         recommendation = "A bash-verifier subagent that checks the output after each Bash call would break these loops early."
+        occ_by_session = {int(r["session_id"]): int(r["loop_count"] or 0) for r in deep_rows}
         findings.append(CoachFinding(
             title=title,
             body=body,
@@ -799,9 +887,12 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
             metric=f"{n} sessions",
             severity="warning",
             session_count=n,
+            estimated_cost_usd=_occurrence_cost(
+                occ_by_session, session_costs=session_costs, tool_counts=tool_counts, has_prices=has_prices,
+            ),
             skill_key="bash-verifier",
             source="heuristic",
-            last_seen_at=deep["last_seen"],
+            last_seen_at=last_seen,
             actions=_build_actions(
                 _slug(title), skill_key="bash-verifier", recommendation=recommendation, title=title, body=body,
             ),
@@ -848,6 +939,18 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 f"This project is driving a disproportionate share of loop waste."
             )
             recommendation = "Look for a repeating pattern specific to this project — a failing test, a tool that always needs retrying, or a prompt that reliably causes loops."
+            # Only fetched when this finding actually fires -- the worst
+            # project's session ids, to price just its share of loop waste.
+            worst_session_ids = [
+                int(r[0]) for r in conn.execute(
+                    "SELECT id FROM sessions WHERE cwd = ? AND first_ts >= ?",
+                    (worst["cwd"], cutoff),
+                ).fetchall()
+            ]
+            estimated_cost = (
+                worst_rate * sum(session_costs.get(sid, 0.0) for sid in worst_session_ids)
+                if has_prices else None
+            )
             findings.append(CoachFinding(
                 title=title,
                 body=body,
@@ -855,6 +958,7 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
                 metric=f'{_proj_name(worst["cwd"])} · {worst_rate*100:.1f}% loop rate',
                 severity="info",
                 session_count=int(worst["session_count"]),
+                estimated_cost_usd=estimated_cost,
                 skill_key="bash-verifier",
                 source="heuristic",
                 last_seen_at=worst["last_seen"],
@@ -866,7 +970,14 @@ def _heuristic_findings(conn: sqlite3.Connection, cutoff: str) -> list[CoachFind
     return findings
 
 
-def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int = 5) -> list[CoachFinding]:
+def _risk_pattern_findings(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    *,
+    session_costs: dict[int, float],
+    has_prices: bool,
+    limit: int = 5,
+) -> list[CoachFinding]:
     """Corpus-wide recurring risk findings.
 
     Reuses analysis/risk_patterns.py's risk_findings table -- already
@@ -903,6 +1014,21 @@ def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int 
             f"({occurrence_count} times) over the selected window."
         )
         recommendation = "Review these sessions for a shared root cause — a flaky test, a tool that regularly needs retrying, or a prompt pattern that reliably triggers this."
+        # One follow-up query per row (bounded by `limit`) rather than
+        # GROUP_CONCAT in the main query, to sidestep SQLite's 64KB
+        # GROUP_CONCAT truncation risk for a heavily-hit category/title pair.
+        session_ids = [
+            int(r[0]) for r in conn.execute(
+                "SELECT DISTINCT rf.session_id FROM risk_findings rf JOIN sessions s ON s.id = rf.session_id "
+                "WHERE rf.category = ? AND rf.title = ? AND s.first_ts >= ?",
+                (row["category"], row["title"], cutoff),
+            ).fetchall()
+        ]
+        # Matches avoidable_spend()'s flat 25%-of-session-cost heuristic for
+        # risk-flagged ("alerted") sessions.
+        estimated_cost = (
+            sum(0.25 * session_costs.get(sid, 0.0) for sid in session_ids) if has_prices else None
+        )
         findings.append(CoachFinding(
             title=title,
             body=body,
@@ -911,6 +1037,7 @@ def _risk_pattern_findings(conn: sqlite3.Connection, cutoff: str, *, limit: int 
             severity="warning" if int(row["severity_rank"]) >= 2 else "info",
             session_count=session_count,
             occurrence_count=occurrence_count,
+            estimated_cost_usd=estimated_cost,
             source="risk_patterns",
             last_seen_at=row["last_seen"],
             actions=_build_actions(
@@ -983,6 +1110,7 @@ def _workflow_findings(
             severity="info",
             session_count=len(session_ids),
             occurrence_count=len(session_ids),
+            estimated_cost_usd=None,  # not a waste finding -- "could automate" isn't "wasted spend"
             source="workflow",
             last_seen_at=last_seen,
             actions=_build_actions(
@@ -1010,10 +1138,69 @@ def _log_applied_action(conn: sqlite3.Connection, *, kind: str, key: str, label:
     return applied_at
 
 
-def _load_action_markers(conn: sqlite3.Connection, *, start_date: str, end_date: str) -> list[CoachActionMarker]:
+def _action_impact(
+    marker_date: str,
+    day_map: dict[str, CoachWeek],
+    *,
+    start_date: str,
+    end_date: str,
+    window_days: int = _IMPACT_WINDOW_DAYS,
+) -> CoachActionImpact:
+    """Compare the `window_days` days before `marker_date` to the `window_days`
+    days after it. The applied-on day itself is excluded from both sides --
+    it's a mixed pre/post signal, not cleanly one or the other. Both windows
+    are clamped to [start_date, end_date] so this never reads data outside the
+    chart's own range or past "now". `sufficient_data` is False when either
+    side has fewer than _MIN_IMPACT_DAYS of real days available -- e.g. the
+    action was applied too recently, or too close to the window start.
+    """
+    try:
+        marker = date.fromisoformat(marker_date)
+        bound_start = date.fromisoformat(start_date)
+        bound_end = date.fromisoformat(end_date)
+    except ValueError:
+        return CoachActionImpact(window_days=window_days, before_days=0, after_days=0, sufficient_data=False)
+
+    before_days = [
+        d for d in (marker - timedelta(days=n) for n in range(1, window_days + 1))
+        if bound_start <= d <= bound_end
+    ]
+    after_days = [
+        d for d in (marker + timedelta(days=n) for n in range(1, window_days + 1))
+        if bound_start <= d <= bound_end
+    ]
+
+    def _sum(days: list[date], attr: str) -> float:
+        return sum(getattr(day_map[d.isoformat()], attr) for d in days if d.isoformat() in day_map)
+
+    before_total = _sum(before_days, "total_usd")
+    after_total = _sum(after_days, "total_usd")
+    before_avoidable = _sum(before_days, "avoidable_usd")
+    after_avoidable = _sum(after_days, "avoidable_usd")
+
+    return CoachActionImpact(
+        window_days=window_days,
+        before_days=len(before_days),
+        after_days=len(after_days),
+        sufficient_data=len(before_days) >= _MIN_IMPACT_DAYS and len(after_days) >= _MIN_IMPACT_DAYS,
+        before_total_usd=before_total,
+        after_total_usd=after_total,
+        before_avoidable_usd=before_avoidable,
+        after_avoidable_usd=after_avoidable,
+        before_avoidable_pct=(before_avoidable / before_total * 100) if before_total > 0 else 0.0,
+        after_avoidable_pct=(after_avoidable / after_total * 100) if after_total > 0 else 0.0,
+    )
+
+
+def _load_action_markers(
+    conn: sqlite3.Connection, *, start_date: str, end_date: str, day_map: dict[str, CoachWeek],
+) -> list[CoachActionMarker]:
     """Applied-action history within [start_date, end_date], bucketed to the
     day for alignment with CoachWeek.week (avoidable_spend is daily-bucketed
-    despite the name -- see its docstring)."""
+    despite the name -- see its docstring). Each marker also carries a
+    before/after impact comparison (_action_impact) so the UI can show
+    whether the fix actually helped, using `day_map` (the same per-day totals
+    avoidable_spend() already built -- no extra query needed)."""
     rows = conn.execute(
         """
         SELECT kind, key, label, applied_at
@@ -1023,16 +1210,30 @@ def _load_action_markers(conn: sqlite3.Connection, *, start_date: str, end_date:
         """,
         (start_date, end_date),
     ).fetchall()
-    return [
-        CoachActionMarker(
+
+    marker_dates = [date.fromisoformat(row["applied_at"][:10]) for row in rows]
+
+    markers: list[CoachActionMarker] = []
+    for i, row in enumerate(rows):
+        marker_day = row["applied_at"][:10]
+        impact = _action_impact(marker_day, day_map, start_date=start_date, end_date=end_date)
+        # Confounded when another applied action within this same loaded
+        # window lands within `window_days` of this one -- a deliberate
+        # simplification (only markers inside [start_date, end_date] are
+        # considered), not a rigorous causal analysis.
+        impact.confounded = any(
+            j != i and abs((marker_dates[i] - marker_dates[j]).days) < impact.window_days
+            for j in range(len(marker_dates))
+        )
+        markers.append(CoachActionMarker(
             kind=row["kind"],
             key=row["key"],
             label=row["label"],
             applied_at=row["applied_at"],
-            week=row["applied_at"][:10],
-        )
-        for row in rows
-    ]
+            week=marker_day,
+            impact=impact,
+        ))
+    return markers
 
 
 def apply_action(
@@ -1077,16 +1278,23 @@ def apply_action(
     return CoachActionResult(applied=True, detail=detail, host_path=host_path)
 
 
-def pattern_analysis(conn: sqlite3.Connection, *, weeks: int = 12) -> CoachPatternsResponse:
+def pattern_analysis(conn: sqlite3.Connection, *, weeks: int = 12, historical: bool = True) -> CoachPatternsResponse:
     cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
 
     total_session_count = conn.execute(
         "SELECT COUNT(*) FROM sessions WHERE first_ts >= ?", (cutoff,)
     ).fetchone()[0]
 
+    # Computed once and threaded through every finding source below, so each
+    # finding can attach an estimated_cost_usd without re-deriving pricing.
+    session_costs, has_prices = session_cost_map(conn, historical=historical)
+    tool_counts = _tool_call_counts(conn)
+
     findings = [
-        *_heuristic_findings(conn, cutoff),
-        *_risk_pattern_findings(conn, cutoff),
+        *_heuristic_findings(
+            conn, cutoff, session_costs=session_costs, tool_counts=tool_counts, has_prices=has_prices,
+        ),
+        *_risk_pattern_findings(conn, cutoff, session_costs=session_costs, has_prices=has_prices),
         *_workflow_findings(conn, cutoff),
     ]
 

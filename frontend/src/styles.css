@@ -4490,7 +4490,13 @@ html:has(.specimen-dialog[open]) {
 }
 
 .coach-kpi-row {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+}
+@media (max-width: 900px) {
+  .coach-kpi-row { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px) {
+  .coach-kpi-row { grid-template-columns: repeat(2, 1fr); }
 }
 .coach-kpi {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -4528,6 +4534,33 @@ html:has(.specimen-dialog[open]) {
 .avoidable-legend-total-label { color: var(--muted); }
 .avoidable-legend-total-value { font-weight: 700; color: var(--text); }
 
+/* Coach tile header + period control */
+.coach-tile-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.coach-tile-header h2 { margin: 0; }
+.coach-chart-controls { display: flex; gap: 8px; }
+.coach-chart-controls select {
+  padding: 7px 12px; border-radius: 9px; height: 33px; box-sizing: border-box;
+  border: 1px solid var(--border-2); background: var(--surface); color: var(--text); font-size: 12px;
+}
+.coach-chart-controls select:focus-visible { outline: none; border-color: var(--accent); }
+
+/* Action impact list */
+.coach-impact-list { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; }
+.coach-impact-row {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.coach-impact-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.coach-impact-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.coach-impact-date { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.coach-impact-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.coach-impact-delta { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.coach-impact-delta.positive { color: var(--success); }
+.coach-impact-delta.negative { color: var(--danger); }
+.coach-impact-usd { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.coach-impact-caveat { font-size: 11px; color: var(--warning); cursor: help; }
+.coach-impact-pending { font-size: 12px; color: var(--muted); font-style: italic; }
+
 /* Pattern discovery */
 .pd-subtitle { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
 .pd-columns {
@@ -4537,6 +4570,7 @@ html:has(.specimen-dialog[open]) {
 }
 .pd-col-pattern { flex: 1; padding-left: 20px; }
 .pd-col-metric { flex: 0 0 140px; text-align: right; }
+.pd-col-cost { flex: 0 0 90px; text-align: right; }
 .pd-col-lastseen {
   flex: 0 0 130px; text-align: right; background: none; border: none; padding: 0;
   font: inherit; text-transform: uppercase; letter-spacing: .05em; color: var(--faint);
@@ -4554,6 +4588,7 @@ html:has(.specimen-dialog[open]) {
 .pd-card-icon { font-size: 12px; flex-shrink: 0; }
 .pd-card-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
 .pd-card-metric { font-size: 11px; font-weight: 600; white-space: nowrap; flex: 0 0 140px; text-align: right; }
+.pd-card-cost { font-size: 11px; font-weight: 600; white-space: nowrap; flex: 0 0 90px; text-align: right; font-variant-numeric: tabular-nums; }
 .pd-card-lastseen-col {
   flex: 0 0 130px; text-align: right; font-size: 10.5px; color: var(--faint);
   font-variant-numeric: tabular-nums; white-space: nowrap;

@@ -1,6 +1,6 @@
 import type { CoachWeek, CoachActionMarker } from "../api/types";
 import {
-  SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR, SUBAGENT_COLOR,
+  SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR,
 } from "../analytics/chartGeometry";
 
 interface Props {
@@ -14,6 +14,11 @@ function formatMarkerDate(iso: string): string {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
+function markerTooltip(m: CoachActionMarker): string {
+  if (!m.impact.sufficient_data) return m.label;
+  return `${m.label} — avoidable ${m.impact.before_avoidable_pct.toFixed(1)}% → ${m.impact.after_avoidable_pct.toFixed(1)}%`;
+}
+
 const W = 600;
 const H = 150;
 const PL = 44;
@@ -23,13 +28,12 @@ const PH = H - PT - 32;
 
 const r = (v: number) => Math.round(v * 10) / 10;
 
-type LayerKey = "efficient_usd" | "loop_waste_usd" | "error_retry_usd" | "alerted_usd";
+type LayerKey = "efficient_usd" | "loop_waste_usd" | "error_retry_usd";
 
 const LAYERS: Array<{ key: LayerKey; color: string; label: string }> = [
   { key: "efficient_usd", color: SUCCESS_COLOR, label: "Efficient" },
   { key: "loop_waste_usd", color: WARNING_COLOR, label: "Loop waste" },
   { key: "error_retry_usd", color: DANGER_COLOR, label: "Error retries" },
-  { key: "alerted_usd", color: SUBAGENT_COLOR, label: "Alerted sessions" },
 ];
 
 // For daily granularity partial_days is always 7 (no-op), so this just returns w unchanged.
@@ -116,11 +120,6 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
     label: `$${v.toFixed(2)}`,
   }));
 
-  const MINBAR_PX = 3; // minimum visible height in SVG units for near-zero days
-  const minBarMarkers = displayWeeks
-    .map((w, i) => ({ x: r(xAt(i)), h: (w.total_usd / maxTotal) * PH, hasData: w.total_usd > 0 }))
-    .filter((m) => m.hasData && m.h < MINBAR_PX);
-
   // Show ~8 x-axis labels across the range
   const step = Math.max(1, Math.ceil(n / 8));
   const xIdxs: number[] = [];
@@ -134,7 +133,7 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
       if (idx < 0) return [];
       const x = r(xAt(idx));
       if (x < PL) return [];
-      return [{ x, pct: (x / W) * 100, key: `${m.kind}:${m.key}`, label: m.label, applied_at: m.applied_at }];
+      return [{ x, pct: (x / W) * 100, key: `${m.kind}:${m.key}`, label: m.label, applied_at: m.applied_at, tooltip: markerTooltip(m) }];
     });
 
   const uniqueXPositions = Array.from(new Set(individualMarkers.map((m) => m.x)));
@@ -188,15 +187,6 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               opacity={0.7}
             />
           ))}
-          {minBarMarkers.map((m) => (
-            <rect
-              key={m.x}
-              x={m.x - 3} y={PT + PH - MINBAR_PX}
-              width={6} height={MINBAR_PX}
-              fill={SUCCESS_COLOR}
-              opacity={0.6}
-            />
-          ))}
         </svg>
         {yTicks.map((t) => (
           <span className="sot-ylabel" key={t.label} style={{ top: `${((t.y - PT) / PH) * 100}%` }}>
@@ -218,7 +208,7 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               key={`${m.key}-${m.stackIdx}`}
               className="sot-skill-pill"
               style={{ left: `${m.pct}%`, top: m.stackIdx * PILL_H }}
-              title={m.label}
+              title={m.tooltip}
             >
               <span className="sot-skill-pill-label">{m.label}</span>
               <span className="sot-skill-pill-date">{formatMarkerDate(m.applied_at)}</span>

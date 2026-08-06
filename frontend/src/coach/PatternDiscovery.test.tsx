@@ -15,6 +15,7 @@ function finding(partial: Partial<CoachFinding> = {}): CoachFinding {
     severity: "warning",
     session_count: 2,
     occurrence_count: 0,
+    estimated_cost_usd: null,
     skill_key: null,
     source: "heuristic",
     last_seen_at: null,
@@ -66,6 +67,23 @@ describe("PatternDiscovery", () => {
     renderWithClient(<PatternDiscovery data={response([finding({ actions: [] })])} />);
     const card = cardFor("Deep loop sessions");
     expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows the Est. cost column header", () => {
+    renderWithClient(<PatternDiscovery data={response([finding()])} />);
+    expect(screen.getByText("Est. cost")).toBeInTheDocument();
+  });
+
+  it("renders a formatted dollar figure when estimated_cost_usd is a number", () => {
+    renderWithClient(<PatternDiscovery data={response([finding({ estimated_cost_usd: 4.2 })])} />);
+    const card = cardFor("Deep loop sessions");
+    expect(within(card).getByText("$4.20")).toBeInTheDocument();
+  });
+
+  it("renders a dash when estimated_cost_usd is null", () => {
+    renderWithClient(<PatternDiscovery data={response([finding({ estimated_cost_usd: null })])} />);
+    const card = cardFor("Deep loop sessions");
+    expect(card.querySelector(".pd-card-cost")?.textContent).toBe("—");
   });
 
   it("renders one button per action, using the backend-supplied label", () => {
@@ -263,7 +281,7 @@ describe("PatternDiscovery", () => {
   it("shows a dash in the last-seen column when the backend doesn't provide one", () => {
     renderWithClient(<PatternDiscovery data={response([finding({ last_seen_at: null })])} />);
     const card = cardFor("Deep loop sessions");
-    expect(within(card).getByText("—")).toBeInTheDocument();
+    expect(card.querySelector(".pd-card-lastseen-col")?.textContent).toBe("—");
   });
 
   it("sorts by last seen (most recent first) when the column header is clicked", () => {
