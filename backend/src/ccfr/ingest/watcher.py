@@ -30,6 +30,15 @@ class _DebouncedImportHandler(FileSystemEventHandler):
         self._source_root = source_root
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
+        # Cancelling a pending (unfired) timer in _arm() does not stop a
+        # _run_import already in flight. Without this, a burst of writes during
+        # an active session re-arms the debounce every 2s while the previous
+        # run is still going, so two imports open separate connections and
+        # race to delete+rebuild the same project's rows concurrently --
+        # surfacing as "FOREIGN KEY constraint failed". This serializes runs
+        # instead: a run that arrives mid-import waits for its turn rather
+        # than racing.
+        self._run_lock = threading.Lock()
 
     def on_any_event(self, event: FileSystemEvent) -> None:
         if event.is_directory:
@@ -51,17 +60,18 @@ class _DebouncedImportHandler(FileSystemEventHandler):
                 self._timer = None
 
     def _run_import(self) -> None:
-        try:
-            conn = connect(database_path())
+        with self._run_lock:
             try:
-                import_all_new(conn, self._source_root)
-            finally:
-                conn.close()
-        except Exception:
-            # A partial write mid-import, or a transient filesystem hiccup, must
-            # not kill the watcher thread -- the next debounced cycle picks up
-            # whatever settled.
-            logger.exception("live import failed")
+                conn = connect(database_path())
+                try:
+                    import_all_new(conn, self._source_root)
+                finally:
+                    conn.close()
+            except Exception:
+                # A partial write mid-import, or a transient filesystem hiccup, must
+                # not kill the watcher thread -- the next debounced cycle picks up
+                # whatever settled.
+                logger.exception("live import failed")
 
 
 class LogWatcher:

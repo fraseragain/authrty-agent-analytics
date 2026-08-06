@@ -483,6 +483,16 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tool_calls ADD COLUMN file_ext TEXT")
         _backfill_tool_call_file_ext(conn)
 
+    # session_alerts predates risk_findings (see coach.py's avoidable_spend()
+    # comment) and was dropped from SCHEMA, but never dropped from databases
+    # created by that older version. Its session_id FK has no ON DELETE
+    # CASCADE, so with foreign_keys=ON any re-import that needs to delete and
+    # rebuild a session it still references (e.g. a loop/cost-spike alert
+    # fired against a session the user is actively using) fails outright with
+    # "FOREIGN KEY constraint failed" -- silently dropping that project's
+    # import every time, forever, until the stale table is gone.
+    conn.execute("DROP TABLE IF EXISTS session_alerts")
+
 
 def _backfill_tool_call_file_ext(conn: sqlite3.Connection) -> None:
     """One-time backfill after adding tool_calls.file_ext.
