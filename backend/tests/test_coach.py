@@ -165,9 +165,11 @@ def test_risk_finding_marks_session_alerted(conn: sqlite3.Connection) -> None:
 
     resp = avoidable_spend(conn, weeks=12)
 
-    # Alerted sessions contribute a flat 25% of session cost as avoidable.
+    # Alerted sessions contribute a flat 25% of session cost as alerted_usd --
+    # but are tracked separately from avoidable_usd, since a risk flag means
+    # "worth investigating", not "confirmed waste".
     assert resp.summary.alerted_usd == pytest.approx(resp.summary.total_usd * 0.25, rel=1e-6)
-    assert resp.summary.avoidable_usd == pytest.approx(resp.summary.alerted_usd)
+    assert resp.summary.avoidable_usd == 0.0
 
 
 def test_model_overkill_compares_subagent_cost_to_haiku(conn: sqlite3.Connection) -> None:

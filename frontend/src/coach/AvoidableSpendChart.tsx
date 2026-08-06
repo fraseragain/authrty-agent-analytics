@@ -1,6 +1,6 @@
 import type { CoachWeek, CoachActionMarker } from "../api/types";
 import {
-  SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR, SUBAGENT_COLOR,
+  SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR,
 } from "../analytics/chartGeometry";
 
 interface Props {
@@ -28,13 +28,12 @@ const PH = H - PT - 32;
 
 const r = (v: number) => Math.round(v * 10) / 10;
 
-type LayerKey = "efficient_usd" | "loop_waste_usd" | "error_retry_usd" | "alerted_usd";
+type LayerKey = "efficient_usd" | "loop_waste_usd" | "error_retry_usd";
 
 const LAYERS: Array<{ key: LayerKey; color: string; label: string }> = [
   { key: "efficient_usd", color: SUCCESS_COLOR, label: "Efficient" },
   { key: "loop_waste_usd", color: WARNING_COLOR, label: "Loop waste" },
   { key: "error_retry_usd", color: DANGER_COLOR, label: "Error retries" },
-  { key: "alerted_usd", color: SUBAGENT_COLOR, label: "Alerted sessions" },
 ];
 
 // For daily granularity partial_days is always 7 (no-op), so this just returns w unchanged.

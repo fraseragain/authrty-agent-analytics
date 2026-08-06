@@ -138,9 +138,14 @@ def avoidable_spend(
     weeks: int = 12,
     historical: bool = False,
 ) -> CoachAvoidableResponse:
-    """Daily spend split into efficient vs. loop waste, error retries,
-    risk-flagged sessions, and model overkill (Sonnet/Opus subagent work
-    that would have sufficed on Haiku).
+    """Daily spend split into efficient vs. loop waste, error retries, and
+    model overkill (Sonnet/Opus subagent work that would have sufficed on
+    Haiku) -- confirmed waste categories that sum into avoidable_usd.
+
+    Risk-flagged ("alerted") session spend is tracked separately in
+    alerted_usd rather than folded into avoidable_usd: a risk flag means
+    "worth a human look", not "confirmed wasted" -- the two shouldn't be
+    conflated in the avoidable-spend figure.
 
     Despite the CoachWeek naming (kept for continuity with the recovered
     design), buckets are daily, not ISO weeks -- _fill_days walks every day
@@ -264,9 +269,13 @@ def avoidable_spend(
         loop_waste = frac * (loop_count / tool_count) * session_total if max_repeat >= _LOOP_REPEAT_THRESHOLD else 0.0
         retry_count = error_retry_counts.get(spk, 0)
         error_retry = frac * (retry_count / tool_count) * session_total
+        # Alerted sessions are flagged for investigation, not confirmed waste
+        # -- tracked separately (alerted_usd) and deliberately left out of
+        # avoidable_usd/efficient_usd, unlike loop_waste/error_retry which
+        # are quantified waste.
         alerted = frac * (0.25 * session_total) if meta["alerted"] else 0.0
 
-        avoidable = loop_waste + error_retry + alerted
+        avoidable = loop_waste + error_retry
         efficient = max(day_cost - avoidable, 0.0)
 
         wk_obj = week_map[day]

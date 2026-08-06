@@ -1,5 +1,5 @@
 import type { CoachSummary } from "../api/types";
-import { formatUsd, SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR, SUBAGENT_COLOR, INFO_COLOR, NEUTRAL_COLOR } from "../analytics/chartGeometry";
+import { formatUsd, SUCCESS_COLOR, WARNING_COLOR, DANGER_COLOR, INFO_COLOR, NEUTRAL_COLOR } from "../analytics/chartGeometry";
 
 interface Props {
   summary: CoachSummary;
@@ -46,7 +46,6 @@ export default function AvoidableBreakdown({ summary }: Props) {
     { label: "Efficient spend", value: efficient, color: SUCCESS_COLOR },
     { label: "Loop waste", value: summary.loop_waste_usd, color: WARNING_COLOR },
     { label: "Error retries", value: summary.error_retry_usd, color: DANGER_COLOR },
-    { label: "Alerted sessions", value: summary.alerted_usd, color: SUBAGENT_COLOR },
     { label: "Model overkill", value: summary.model_overkill_usd, color: INFO_COLOR },
   ];
 

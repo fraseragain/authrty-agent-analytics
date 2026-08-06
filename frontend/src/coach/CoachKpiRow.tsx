@@ -1,5 +1,5 @@
 import type { CoachSummary } from "../api/types";
-import { formatTokens, formatUsd } from "../analytics/chartGeometry";
+import { formatTokens, formatUsd, DANGER_COLOR, SUBAGENT_COLOR } from "../analytics/chartGeometry";
 
 interface Props {
   summary: CoachSummary;
@@ -20,12 +20,16 @@ export default function CoachKpiRow({ summary }: Props) {
         <span className="kpi-value">{formatUsd(summary.total_usd)}</span>
       </div>
       <div className="coach-kpi">
+        <span className="kpi-label">Investigate further</span>
+        <span className="kpi-value" style={{ color: SUBAGENT_COLOR }}>{formatUsd(summary.alerted_usd)}</span>
+      </div>
+      <div className="coach-kpi">
         <span className="kpi-label">Avoidable spend</span>
-        <span className="kpi-value">{formatUsd(summary.avoidable_usd)}</span>
+        <span className="kpi-value" style={{ color: DANGER_COLOR }}>{formatUsd(summary.avoidable_usd)}</span>
       </div>
       <div className="coach-kpi">
         <span className="kpi-label">Avoidable %</span>
-        <span className="kpi-value">{summary.avoidable_pct.toFixed(1)}%</span>
+        <span className="kpi-value" style={{ color: DANGER_COLOR }}>{summary.avoidable_pct.toFixed(1)}%</span>
       </div>
       <div className="coach-kpi">
         <span className="kpi-label">Waste % vs last period</span>

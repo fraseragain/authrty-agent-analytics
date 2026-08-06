@@ -28,6 +28,12 @@ describe("CoachKpiRow", () => {
     expect(screen.getByText("25.0%")).toBeInTheDocument();
   });
 
+  it("renders an Investigate further tile from alerted_usd, separate from avoidable spend", () => {
+    render(<CoachKpiRow summary={summary({ alerted_usd: 42 })} />);
+    expect(screen.getByText("Investigate further")).toBeInTheDocument();
+    expect(screen.getByText("$42.00")).toBeInTheDocument();
+  });
+
   it("shows an em dash when there is no previous period to compare", () => {
     render(<CoachKpiRow summary={summary({ vs_prev_period_pct: null })} />);
     expect(screen.getByText("—")).toBeInTheDocument();
