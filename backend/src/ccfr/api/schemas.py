@@ -922,6 +922,7 @@ class CoachFinding(BaseModel):
     severity: str  # "warning" | "info"
     session_count: int = 0
     occurrence_count: int = 0
+    estimated_cost_usd: float | None = None
     skill_key: str | None = None
     source: str  # "risk_patterns" | "heuristic" | "workflow"
     last_seen_at: str | None = None

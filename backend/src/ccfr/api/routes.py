@@ -696,8 +696,9 @@ def get_coach_avoidable(
 def get_coach_patterns(
     weeks: int = Query(default=12, ge=1, le=52),
     conn: Connection = Depends(get_db),
+    historical: bool = Depends(get_historical_pricing),
 ) -> CoachPatternsResponse:
-    return coach_module.pattern_analysis(conn, weeks=weeks)
+    return coach_module.pattern_analysis(conn, weeks=weeks, historical=historical)
 
 
 @router.post("/coach/actions/{kind}/{key}", response_model=CoachActionResult)

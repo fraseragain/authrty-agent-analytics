@@ -33,7 +33,7 @@ beforeEach(() => {
       {
         title: "Deep loop sessions", body: "2 sessions looped.", recommendation: "Add a verifier.",
         metric: "2 sessions", severity: "warning", session_count: 2, occurrence_count: 0,
-        skill_key: null, source: "heuristic", last_seen_at: null, actions: [],
+        estimated_cost_usd: null, skill_key: null, source: "heuristic", last_seen_at: null, actions: [],
       },
     ],
     total_session_count: 5,

@@ -2,7 +2,7 @@ import React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, X } from "lucide-react";
 import type { CoachAction, CoachFinding, CoachPatternsResponse } from "../api/types";
-import { WARNING_COLOR, INFO_COLOR } from "../analytics/chartGeometry";
+import { WARNING_COLOR, INFO_COLOR, formatUsd } from "../analytics/chartGeometry";
 import { applyCoachAction } from "../api/client";
 
 interface Props {
@@ -102,6 +102,9 @@ function FindingCard({
         <span className="pd-card-icon" style={{ color: accentColor }}>{icon}</span>
         <span className="pd-card-title">{finding.title}</span>
         <span className="pd-card-metric" style={{ color: accentColor }}>{finding.metric}</span>
+        <span className="pd-card-cost" style={{ color: accentColor }}>
+          {finding.estimated_cost_usd != null ? formatUsd(finding.estimated_cost_usd) : "—"}
+        </span>
         <span className="pd-card-lastseen-col">
           {finding.last_seen_at ? (
             <time dateTime={finding.last_seen_at}>{formatLastSeen(finding.last_seen_at)}</time>
@@ -182,6 +185,7 @@ export default function PatternDiscovery({ data }: Props) {
       <div className="pd-columns">
         <span className="pd-col-pattern">Pattern</span>
         <span className="pd-col-metric">Metric</span>
+        <span className="pd-col-cost">Est. cost</span>
         <button
           type="button"
           className={`pd-col-lastseen ${sortByLastSeen ? "sorted" : ""}`}
