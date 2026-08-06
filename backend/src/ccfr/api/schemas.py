@@ -845,6 +845,7 @@ class CoachWeek(BaseModel):
     week: str
     week_label: str
     total_usd: float = 0.0
+    total_tokens: int = 0
     efficient_usd: float = 0.0
     loop_waste_usd: float = 0.0
     error_retry_usd: float = 0.0
@@ -858,12 +859,15 @@ class CoachWeek(BaseModel):
 
 class CoachSummary(BaseModel):
     total_usd: float = 0.0
+    total_tokens: int = 0
     avoidable_usd: float = 0.0
     avoidable_pct: float = 0.0
     loop_waste_usd: float = 0.0
     error_retry_usd: float = 0.0
     alerted_usd: float = 0.0
     model_overkill_usd: float = 0.0
+    # Percentage-point change in avoidable % (waste rate) between the first
+    # and second half of the window -- not a change in absolute spend.
     vs_prev_period_pct: float | None = None
 
 

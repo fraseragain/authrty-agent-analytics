@@ -17,13 +17,13 @@ beforeEach(() => {
   vi.spyOn(client, "getCoachAvoidable").mockResolvedValue({
     weeks: [
       {
-        week: "2026-06-01", week_label: "1 Jun", total_usd: 10, efficient_usd: 10,
+        week: "2026-06-01", week_label: "1 Jun", total_usd: 10, total_tokens: 1000, efficient_usd: 10,
         loop_waste_usd: 0, error_retry_usd: 0, alerted_usd: 0, model_overkill_usd: 0,
         avoidable_usd: 0, session_count: 1, is_partial: false, partial_days: 7,
       },
     ],
     summary: {
-      total_usd: 10, avoidable_usd: 0, avoidable_pct: 0, loop_waste_usd: 0,
+      total_usd: 10, total_tokens: 1000, avoidable_usd: 0, avoidable_pct: 0, loop_waste_usd: 0,
       error_retry_usd: 0, alerted_usd: 0, model_overkill_usd: 0, vs_prev_period_pct: null,
     },
     markers: [],

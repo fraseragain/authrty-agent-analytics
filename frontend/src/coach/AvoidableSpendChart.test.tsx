@@ -8,6 +8,7 @@ function week(partial: Partial<CoachWeek>): CoachWeek {
     week: "2026-06-01",
     week_label: "1 Jun",
     total_usd: 0,
+    total_tokens: 0,
     efficient_usd: 0,
     loop_waste_usd: 0,
     error_retry_usd: 0,

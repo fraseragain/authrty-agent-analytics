@@ -876,6 +876,7 @@ export interface CoachWeek {
   week: string;
   week_label: string;
   total_usd: number;
+  total_tokens: number;
   efficient_usd: number;
   loop_waste_usd: number;
   error_retry_usd: number;
@@ -889,6 +890,7 @@ export interface CoachWeek {
 
 export interface CoachSummary {
   total_usd: number;
+  total_tokens: number;
   avoidable_usd: number;
   avoidable_pct: number;
   loop_waste_usd: number;

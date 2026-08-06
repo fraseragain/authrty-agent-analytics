@@ -1,5 +1,5 @@
 import type { CoachSummary } from "../api/types";
-import { formatUsd } from "../analytics/chartGeometry";
+import { formatTokens, formatUsd } from "../analytics/chartGeometry";
 
 interface Props {
   summary: CoachSummary;
@@ -11,6 +11,10 @@ export default function CoachKpiRow({ summary }: Props) {
 
   return (
     <div className="coach-kpi-row">
+      <div className="coach-kpi">
+        <span className="kpi-label">Total tokens</span>
+        <span className="kpi-value">{formatTokens(summary.total_tokens)}</span>
+      </div>
       <div className="coach-kpi">
         <span className="kpi-label">Total spend</span>
         <span className="kpi-value">{formatUsd(summary.total_usd)}</span>
@@ -24,7 +28,7 @@ export default function CoachKpiRow({ summary }: Props) {
         <span className="kpi-value">{summary.avoidable_pct.toFixed(1)}%</span>
       </div>
       <div className="coach-kpi">
-        <span className="kpi-label">vs last period</span>
+        <span className="kpi-label">Waste % vs last period</span>
         {vs !== null ? (
           <span className={`kpi-value kpi-delta ${isUp ? "negative" : "positive"}`}>
             {isUp ? "▲" : "▼"} {Math.abs(vs).toFixed(1)}%

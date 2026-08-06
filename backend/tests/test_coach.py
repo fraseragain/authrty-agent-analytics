@@ -212,6 +212,49 @@ def test_window_excludes_sessions_before_the_requested_weeks(conn: sqlite3.Conne
     assert len(resp.weeks) <= 9
 
 
+def test_total_tokens_sums_across_sessions_and_days(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    ts = _now()
+    s1 = _add_session(conn, pid, "s1", ts, tool_call_count=4)
+    _add_message(conn, s1, ts, "claude-sonnet-4-6", 100, 50)
+    s2 = _add_session(conn, pid, "s2", ts, tool_call_count=4)
+    _add_message(conn, s2, ts, "claude-haiku-4-5-20251001", 200, 25)
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    assert resp.summary.total_tokens == 100 + 50 + 200 + 25
+    assert sum(w.total_tokens for w in resp.weeks) == resp.summary.total_tokens
+
+
+def test_vs_prev_period_pct_tracks_waste_rate_not_absolute_spend(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    # Older half of the window: small spend, heavy loop waste -> high avoidable %.
+    for n in range(4, 8):
+        ts = _days_ago(n)
+        s = _add_session(conn, pid, f"old-{n}", ts, loop_count=3, max_repeat=5, tool_call_count=4)
+        _add_message(conn, s, ts, "claude-sonnet-4-6", 10_000, 10_000)
+    # Recent half: much larger spend, but no loop waste -> ~0% avoidable.
+    for n in range(0, 4):
+        ts = _days_ago(n)
+        s = _add_session(conn, pid, f"new-{n}", ts, tool_call_count=4)
+        _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    assert len(resp.weeks) == 8
+    first_total = sum(w.total_usd for w in resp.weeks[:4])
+    second_total = sum(w.total_usd for w in resp.weeks[4:])
+    # Absolute spend grew sharply in the second half...
+    assert second_total > first_total * 5
+    # ...but vs_prev_period_pct should show *improvement* (negative), because
+    # it tracks the waste rate (avoidable %) rather than the $ amount -- the
+    # old (pre-change) formula would have reported a large positive number here.
+    assert resp.summary.vs_prev_period_pct is not None
+    assert resp.summary.vs_prev_period_pct < 0
+
+
 # ---------------------------------------------------------------------------
 # intervention impact: before/after comparison attached to applied-action markers
 # ---------------------------------------------------------------------------

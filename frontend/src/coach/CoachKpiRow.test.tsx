@@ -6,6 +6,7 @@ import type { CoachSummary } from "../api/types";
 function summary(partial: Partial<CoachSummary> = {}): CoachSummary {
   return {
     total_usd: 100,
+    total_tokens: 2_500_000,
     avoidable_usd: 25,
     avoidable_pct: 25,
     loop_waste_usd: 10,
@@ -18,8 +19,10 @@ function summary(partial: Partial<CoachSummary> = {}): CoachSummary {
 }
 
 describe("CoachKpiRow", () => {
-  it("renders total spend, avoidable spend, and avoidable percentage", () => {
+  it("renders total tokens, total spend, avoidable spend, and avoidable percentage", () => {
     render(<CoachKpiRow summary={summary()} />);
+    expect(screen.getByText("Total tokens")).toBeInTheDocument();
+    expect(screen.getByText("2.5M")).toBeInTheDocument();
     expect(screen.getByText("$100.00")).toBeInTheDocument();
     expect(screen.getByText("$25.00")).toBeInTheDocument();
     expect(screen.getByText("25.0%")).toBeInTheDocument();
@@ -30,14 +33,15 @@ describe("CoachKpiRow", () => {
     expect(screen.getByText("—")).toBeInTheDocument();
   });
 
-  it("marks a spend increase as negative (more spend is worse)", () => {
+  it("marks a waste-rate increase as negative (more waste is worse)", () => {
     render(<CoachKpiRow summary={summary({ vs_prev_period_pct: 12.3 })} />);
+    expect(screen.getByText("Waste % vs last period")).toBeInTheDocument();
     const delta = screen.getByText(/12\.3%/);
     expect(delta).toHaveClass("negative");
     expect(delta.textContent).toContain("▲");
   });
 
-  it("marks a spend decrease as positive (less spend is better)", () => {
+  it("marks a waste-rate decrease as positive (less waste is better)", () => {
     render(<CoachKpiRow summary={summary({ vs_prev_period_pct: -8 })} />);
     const delta = screen.getByText(/8\.0%/);
     expect(delta).toHaveClass("positive");

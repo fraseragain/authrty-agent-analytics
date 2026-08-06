@@ -6,6 +6,7 @@ import type { CoachSummary } from "../api/types";
 function summary(partial: Partial<CoachSummary> = {}): CoachSummary {
   return {
     total_usd: 100,
+    total_tokens: 0,
     avoidable_usd: 25,
     avoidable_pct: 25,
     loop_waste_usd: 10,

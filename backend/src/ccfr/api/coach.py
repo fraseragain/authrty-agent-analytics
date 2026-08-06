@@ -167,10 +167,14 @@ def avoidable_spend(
     # Accumulate per-(session, day) cost, keeping session-level waste metrics separate.
     session_day_costs: dict[tuple[int, str], float] = {}
     session_meta: dict[int, dict] = {}
+    # Token counts don't depend on pricing being available, so they're tallied
+    # unconditionally (unlike day_cost below, which needs a price match).
+    day_tokens: dict[str, int] = defaultdict(int)
 
     for row in rows:
         spk = int(row["session_pk"])
         day = row["event_day"] or ""
+        day_tokens[day] += sum(int(row[cat]) for cat in _CATEGORIES)
         if spk not in session_meta:
             session_meta[spk] = {
                 "loop_count": int(row["loop_count"] or 0),
@@ -206,6 +210,10 @@ def avoidable_spend(
         )
         for k in day_keys
     }
+    for day, tokens in day_tokens.items():
+        if day in week_map:
+            week_map[day].total_tokens += tokens
+
     # Track which sessions contributed to each day to avoid double-counting session_count.
     day_sessions: dict[str, set[int]] = {k: set() for k in day_keys}
 
@@ -288,6 +296,7 @@ def avoidable_spend(
     week_list = list(week_map.values())
 
     total_usd = sum(w.total_usd for w in week_list)
+    total_tokens = sum(w.total_tokens for w in week_list)
     avoidable_usd = sum(w.avoidable_usd for w in week_list)
     loop_waste_usd = sum(w.loop_waste_usd for w in week_list)
     error_retry_usd = sum(w.error_retry_usd for w in week_list)
@@ -296,16 +305,26 @@ def avoidable_spend(
 
     avoidable_pct = (avoidable_usd / total_usd * 100) if total_usd > 0 else 0.0
 
+    # vs_prev tracks the *waste rate* (avoidable %), not absolute spend --
+    # total spend naturally grows with usage, so a $ comparison mostly just
+    # reflects "did I use it more", not "did I get more efficient". Expressed
+    # as a percentage-point delta in avoidable_pct between the first and
+    # second half of the window.
     vs_prev = None
     if len(week_list) >= 4:
         mid = len(week_list) // 2
-        first_half = sum(w.total_usd for w in week_list[:mid])
-        second_half = sum(w.total_usd for w in week_list[mid:])
-        if first_half > 0:
-            vs_prev = (second_half - first_half) / first_half * 100
+        first_total = sum(w.total_usd for w in week_list[:mid])
+        second_total = sum(w.total_usd for w in week_list[mid:])
+        first_avoidable = sum(w.avoidable_usd for w in week_list[:mid])
+        second_avoidable = sum(w.avoidable_usd for w in week_list[mid:])
+        if first_total > 0:
+            first_pct = first_avoidable / first_total * 100
+            second_pct = (second_avoidable / second_total * 100) if second_total > 0 else 0.0
+            vs_prev = second_pct - first_pct
 
     summary = CoachSummary(
         total_usd=total_usd,
+        total_tokens=total_tokens,
         avoidable_usd=avoidable_usd,
         avoidable_pct=avoidable_pct,
         loop_waste_usd=loop_waste_usd,

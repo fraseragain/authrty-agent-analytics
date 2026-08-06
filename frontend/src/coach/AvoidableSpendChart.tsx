@@ -121,11 +121,6 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
     label: `$${v.toFixed(2)}`,
   }));
 
-  const MINBAR_PX = 3; // minimum visible height in SVG units for near-zero days
-  const minBarMarkers = displayWeeks
-    .map((w, i) => ({ x: r(xAt(i)), h: (w.total_usd / maxTotal) * PH, hasData: w.total_usd > 0 }))
-    .filter((m) => m.hasData && m.h < MINBAR_PX);
-
   // Show ~8 x-axis labels across the range
   const step = Math.max(1, Math.ceil(n / 8));
   const xIdxs: number[] = [];
@@ -191,15 +186,6 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               stroke="var(--success)"
               strokeWidth={1.5}
               opacity={0.7}
-            />
-          ))}
-          {minBarMarkers.map((m) => (
-            <rect
-              key={m.x}
-              x={m.x - 3} y={PT + PH - MINBAR_PX}
-              width={6} height={MINBAR_PX}
-              fill={SUCCESS_COLOR}
-              opacity={0.6}
             />
           ))}
         </svg>

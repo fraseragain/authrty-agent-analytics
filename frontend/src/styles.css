@@ -4490,7 +4490,10 @@ html:has(.specimen-dialog[open]) {
 }
 
 .coach-kpi-row {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+}
+@media (max-width: 900px) {
+  .coach-kpi-row { grid-template-columns: repeat(2, 1fr); }
 }
 .coach-kpi {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -4539,7 +4542,7 @@ html:has(.specimen-dialog[open]) {
 .coach-chart-controls select:focus-visible { outline: none; border-color: var(--accent); }
 
 /* Action impact list */
-.coach-impact-list { display: flex; flex-direction: column; gap: 10px; }
+.coach-impact-list { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; }
 .coach-impact-row {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 14px; display: flex; flex-direction: column; gap: 4px;
