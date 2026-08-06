@@ -265,12 +265,20 @@ def test_load_action_markers_buckets_by_day(bare_conn: sqlite3.Connection) -> No
     )
     bare_conn.commit()
 
-    markers = coach_module._load_action_markers(bare_conn, start_date="2026-06-01", end_date="2026-06-30")
+    markers = coach_module._load_action_markers(
+        bare_conn, start_date="2026-06-01", end_date="2026-06-30", day_map={}
+    )
 
     assert len(markers) == 1
     assert markers[0].week == "2026-06-15"
     assert markers[0].applied_at == "2026-06-15T14:32:00+00:00"
     assert markers[0].label == "Add to CLAUDE.md"
+    # Marker sits well within [start_date, end_date], so both 7-day windows
+    # are fully in range -- sufficient regardless of day_map contents (an
+    # empty day_map just means every day sums to zero).
+    assert markers[0].impact.sufficient_data is True
+    assert markers[0].impact.before_days == 7
+    assert markers[0].impact.after_days == 7
 
 
 def test_load_action_markers_excludes_outside_window(bare_conn: sqlite3.Connection) -> None:
@@ -278,7 +286,9 @@ def test_load_action_markers_excludes_outside_window(bare_conn: sqlite3.Connecti
     bare_conn.execute("UPDATE coach_applied_actions SET applied_at = '2026-01-01T00:00:00+00:00' WHERE key = 'old'")
     bare_conn.commit()
 
-    markers = coach_module._load_action_markers(bare_conn, start_date="2026-06-01", end_date="2026-06-30")
+    markers = coach_module._load_action_markers(
+        bare_conn, start_date="2026-06-01", end_date="2026-06-30", day_map={}
+    )
 
     assert markers == []
 
@@ -419,6 +429,9 @@ def test_post_coach_action_then_avoidable_shows_a_marker(client: TestClient) -> 
     assert markers[0]["key"] == "bash-verifier"
     assert markers[0]["label"] == "Create bash-verifier agent"
     assert markers[0]["week"] == markers[0]["applied_at"][:10]
+    # Applied just now, in an otherwise-empty corpus -- there's no "after"
+    # data yet, so impact is present but explicitly not trustworthy.
+    assert markers[0]["impact"]["sufficient_data"] is False
 
 
 def test_post_coach_action_claude_md_with_finding_title_shows_descriptive_marker(client: TestClient) -> None:

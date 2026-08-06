@@ -898,12 +898,27 @@ export interface CoachSummary {
   vs_prev_period_pct: number | null;
 }
 
+export interface CoachActionImpact {
+  window_days: number;
+  before_days: number;
+  after_days: number;
+  sufficient_data: boolean;
+  before_total_usd: number;
+  after_total_usd: number;
+  before_avoidable_usd: number;
+  after_avoidable_usd: number;
+  before_avoidable_pct: number;
+  after_avoidable_pct: number;
+  confounded: boolean;
+}
+
 export interface CoachActionMarker {
   kind: string;
   key: string;
   label: string;
   applied_at: string;
   week: string;
+  impact: CoachActionImpact;
 }
 
 export interface CoachAvoidableResponse {

@@ -867,12 +867,34 @@ class CoachSummary(BaseModel):
     vs_prev_period_pct: float | None = None
 
 
+class CoachActionImpact(BaseModel):
+    """Before/after comparison of daily spend around an applied action.
+
+    Always populated (never None) -- callers gate display on `sufficient_data`
+    rather than on presence, so a "not enough data yet" state renders the same
+    shape as a real comparison.
+    """
+
+    window_days: int
+    before_days: int  # actual days of pre-window data available (<= window_days)
+    after_days: int  # actual days of post-window data available (<= window_days)
+    sufficient_data: bool
+    before_total_usd: float = 0.0
+    after_total_usd: float = 0.0
+    before_avoidable_usd: float = 0.0
+    after_avoidable_usd: float = 0.0
+    before_avoidable_pct: float = 0.0
+    after_avoidable_pct: float = 0.0
+    confounded: bool = False  # another action applied within window_days of this one
+
+
 class CoachActionMarker(BaseModel):
     kind: str
     key: str
     label: str
     applied_at: str
     week: str  # YYYY-MM-DD bucket, matches CoachWeek.week for chart alignment
+    impact: CoachActionImpact
 
 
 class CoachAvoidableResponse(BaseModel):

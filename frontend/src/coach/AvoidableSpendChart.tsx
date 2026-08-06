@@ -14,6 +14,11 @@ function formatMarkerDate(iso: string): string {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
+function markerTooltip(m: CoachActionMarker): string {
+  if (!m.impact.sufficient_data) return m.label;
+  return `${m.label} — avoidable ${m.impact.before_avoidable_pct.toFixed(1)}% → ${m.impact.after_avoidable_pct.toFixed(1)}%`;
+}
+
 const W = 600;
 const H = 150;
 const PL = 44;
@@ -134,7 +139,7 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
       if (idx < 0) return [];
       const x = r(xAt(idx));
       if (x < PL) return [];
-      return [{ x, pct: (x / W) * 100, key: `${m.kind}:${m.key}`, label: m.label, applied_at: m.applied_at }];
+      return [{ x, pct: (x / W) * 100, key: `${m.kind}:${m.key}`, label: m.label, applied_at: m.applied_at, tooltip: markerTooltip(m) }];
     });
 
   const uniqueXPositions = Array.from(new Set(individualMarkers.map((m) => m.x)));
@@ -218,7 +223,7 @@ export default function AvoidableSpendChart({ weeks, markers }: Props) {
               key={`${m.key}-${m.stackIdx}`}
               className="sot-skill-pill"
               style={{ left: `${m.pct}%`, top: m.stackIdx * PILL_H }}
-              title={m.label}
+              title={m.tooltip}
             >
               <span className="sot-skill-pill-label">{m.label}</span>
               <span className="sot-skill-pill-date">{formatMarkerDate(m.applied_at)}</span>

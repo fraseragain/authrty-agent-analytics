@@ -87,6 +87,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _days_ago(n: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=n)).isoformat()
+
+
 def test_empty_corpus_returns_zeroes(conn: sqlite3.Connection) -> None:
     resp = avoidable_spend(conn, weeks=12)
     assert resp.summary.total_usd == 0.0
@@ -206,3 +210,132 @@ def test_window_excludes_sessions_before_the_requested_weeks(conn: sqlite3.Conne
     assert resp.summary.total_usd == 0.0
     # ~1 week + 1 day of daily buckets, not the multi-decade span back to old_ts.
     assert len(resp.weeks) <= 9
+
+
+# ---------------------------------------------------------------------------
+# intervention impact: before/after comparison attached to applied-action markers
+# ---------------------------------------------------------------------------
+
+
+def test_action_impact_shows_improvement_after_applying_fix(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    for n in range(8, 15):  # 7 days strictly before the marker: loop-wasteful sessions
+        ts = _days_ago(n)
+        s = _add_session(conn, pid, f"before-{n}", ts, loop_count=3, max_repeat=5, tool_call_count=4)
+        _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    for n in range(0, 7):  # 7 days strictly after the marker: clean sessions
+        ts = _days_ago(n)
+        s = _add_session(conn, pid, f"after-{n}", ts, tool_call_count=4)
+        _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?)",
+        ("claude_md", "fix", "Fixed it", _days_ago(7)),
+    )
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    assert len(resp.markers) == 1
+    impact = resp.markers[0].impact
+    assert impact.sufficient_data is True
+    assert impact.confounded is False
+    assert impact.before_avoidable_pct > 0
+    assert impact.after_avoidable_pct == 0.0
+    assert impact.after_avoidable_pct < impact.before_avoidable_pct
+
+
+def test_action_impact_insufficient_when_recently_applied(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    # An older session pushes the query's start_date back far enough that the
+    # "before" side of the window is fully populated -- isolating the
+    # insufficiency to the "after" side, which is what "recently applied"
+    # should actually trip.
+    old_ts = _days_ago(10)
+    s_old = _add_session(conn, pid, "old", old_ts, tool_call_count=4)
+    _add_message(conn, s_old, old_ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    ts = _now()
+    s = _add_session(conn, pid, "today", ts, tool_call_count=4)
+    _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?)",
+        ("claude_md", "fix", "Fixed it", _days_ago(1)),
+    )
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    assert len(resp.markers) == 1
+    impact = resp.markers[0].impact
+    assert impact.before_days == 7
+    assert impact.after_days == 1
+    assert impact.sufficient_data is False
+
+
+def test_action_impact_confounded_when_actions_land_close_together(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    # A session predating both markers so the query's start_date covers them
+    # -- otherwise they'd fall outside [start_date, end_date] and never load.
+    old_ts = _days_ago(6)
+    s_old = _add_session(conn, pid, "old", old_ts, tool_call_count=4)
+    _add_message(conn, s_old, old_ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    ts = _now()
+    s = _add_session(conn, pid, "s1", ts, tool_call_count=4)
+    _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?)",
+        ("claude_md", "fix-a", "Fix A", _days_ago(5), "claude_md", "fix-b", "Fix B", _days_ago(3)),
+    )
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    assert len(resp.markers) == 2
+    assert all(m.impact.confounded for m in resp.markers)
+
+
+def test_action_impact_not_confounded_when_actions_are_far_apart(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    far_ts = _days_ago(60)
+    s_far = _add_session(conn, pid, "far", far_ts, tool_call_count=4)
+    _add_message(conn, s_far, far_ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    ts = _now()
+    s = _add_session(conn, pid, "s1", ts, tool_call_count=4)
+    _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)",
+        (
+            "claude_md", "fix-a", "Fix A", _days_ago(5),
+            "claude_md", "fix-b", "Fix B", _days_ago(3),
+            "claude_md", "fix-c", "Fix C", far_ts,
+        ),
+    )
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=12)
+
+    by_key = {m.key: m for m in resp.markers}
+    assert by_key["fix-a"].impact.confounded is True
+    assert by_key["fix-b"].impact.confounded is True
+    assert by_key["fix-c"].impact.confounded is False
+
+
+def test_action_impact_clamped_to_query_window(conn: sqlite3.Connection) -> None:
+    pid = _project_id(conn)
+    ts = _now()
+    s = _add_session(conn, pid, "s1", ts, tool_call_count=4)
+    _add_message(conn, s, ts, "claude-sonnet-4-6", 1_000_000, 1_000_000)
+    conn.execute(
+        "INSERT INTO coach_applied_actions (kind, key, label, applied_at) VALUES (?, ?, ?, ?)",
+        ("claude_md", "fix", "Fixed it", _now()),
+    )
+    conn.commit()
+
+    resp = avoidable_spend(conn, weeks=1)
+
+    assert len(resp.markers) == 1
+    impact = resp.markers[0].impact
+    # The only session is today, so the query window collapses to a single
+    # day -- neither side of the before/after comparison can reach past it.
+    assert impact.before_days == 0
+    assert impact.after_days == 0
+    assert impact.sufficient_data is False

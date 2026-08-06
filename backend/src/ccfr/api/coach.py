@@ -17,6 +17,7 @@ from pathlib import Path
 from ccfr.analysis.pricing import TokenBreakdown, cost_usd, load_price_timeline, match_price
 from ccfr.api.schemas import (
     CoachAction,
+    CoachActionImpact,
     CoachActionMarker,
     CoachActionResult,
     CoachAvoidableResponse,
@@ -46,6 +47,12 @@ _CATEGORIES = tuple(_CATEGORY_COLUMNS)
 
 _LOOP_REPEAT_THRESHOLD = 5
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+# Intervention-impact comparison window: how many days on either side of an
+# applied action to sum for the before/after comparison, and the minimum
+# number of real (in-range) days required on each side to trust the result.
+_IMPACT_WINDOW_DAYS = 7
+_MIN_IMPACT_DAYS = 3
 
 
 def _day_label(date_key: str) -> str:
@@ -308,7 +315,7 @@ def avoidable_spend(
         vs_prev_period_pct=vs_prev,
     )
 
-    markers = _load_action_markers(conn, start_date=start_date, end_date=today_str)
+    markers = _load_action_markers(conn, start_date=start_date, end_date=today_str, day_map=week_map)
 
     return CoachAvoidableResponse(weeks=week_list, summary=summary, markers=markers)
 
@@ -1010,10 +1017,69 @@ def _log_applied_action(conn: sqlite3.Connection, *, kind: str, key: str, label:
     return applied_at
 
 
-def _load_action_markers(conn: sqlite3.Connection, *, start_date: str, end_date: str) -> list[CoachActionMarker]:
+def _action_impact(
+    marker_date: str,
+    day_map: dict[str, CoachWeek],
+    *,
+    start_date: str,
+    end_date: str,
+    window_days: int = _IMPACT_WINDOW_DAYS,
+) -> CoachActionImpact:
+    """Compare the `window_days` days before `marker_date` to the `window_days`
+    days after it. The applied-on day itself is excluded from both sides --
+    it's a mixed pre/post signal, not cleanly one or the other. Both windows
+    are clamped to [start_date, end_date] so this never reads data outside the
+    chart's own range or past "now". `sufficient_data` is False when either
+    side has fewer than _MIN_IMPACT_DAYS of real days available -- e.g. the
+    action was applied too recently, or too close to the window start.
+    """
+    try:
+        marker = date.fromisoformat(marker_date)
+        bound_start = date.fromisoformat(start_date)
+        bound_end = date.fromisoformat(end_date)
+    except ValueError:
+        return CoachActionImpact(window_days=window_days, before_days=0, after_days=0, sufficient_data=False)
+
+    before_days = [
+        d for d in (marker - timedelta(days=n) for n in range(1, window_days + 1))
+        if bound_start <= d <= bound_end
+    ]
+    after_days = [
+        d for d in (marker + timedelta(days=n) for n in range(1, window_days + 1))
+        if bound_start <= d <= bound_end
+    ]
+
+    def _sum(days: list[date], attr: str) -> float:
+        return sum(getattr(day_map[d.isoformat()], attr) for d in days if d.isoformat() in day_map)
+
+    before_total = _sum(before_days, "total_usd")
+    after_total = _sum(after_days, "total_usd")
+    before_avoidable = _sum(before_days, "avoidable_usd")
+    after_avoidable = _sum(after_days, "avoidable_usd")
+
+    return CoachActionImpact(
+        window_days=window_days,
+        before_days=len(before_days),
+        after_days=len(after_days),
+        sufficient_data=len(before_days) >= _MIN_IMPACT_DAYS and len(after_days) >= _MIN_IMPACT_DAYS,
+        before_total_usd=before_total,
+        after_total_usd=after_total,
+        before_avoidable_usd=before_avoidable,
+        after_avoidable_usd=after_avoidable,
+        before_avoidable_pct=(before_avoidable / before_total * 100) if before_total > 0 else 0.0,
+        after_avoidable_pct=(after_avoidable / after_total * 100) if after_total > 0 else 0.0,
+    )
+
+
+def _load_action_markers(
+    conn: sqlite3.Connection, *, start_date: str, end_date: str, day_map: dict[str, CoachWeek],
+) -> list[CoachActionMarker]:
     """Applied-action history within [start_date, end_date], bucketed to the
     day for alignment with CoachWeek.week (avoidable_spend is daily-bucketed
-    despite the name -- see its docstring)."""
+    despite the name -- see its docstring). Each marker also carries a
+    before/after impact comparison (_action_impact) so the UI can show
+    whether the fix actually helped, using `day_map` (the same per-day totals
+    avoidable_spend() already built -- no extra query needed)."""
     rows = conn.execute(
         """
         SELECT kind, key, label, applied_at
@@ -1023,16 +1089,30 @@ def _load_action_markers(conn: sqlite3.Connection, *, start_date: str, end_date:
         """,
         (start_date, end_date),
     ).fetchall()
-    return [
-        CoachActionMarker(
+
+    marker_dates = [date.fromisoformat(row["applied_at"][:10]) for row in rows]
+
+    markers: list[CoachActionMarker] = []
+    for i, row in enumerate(rows):
+        marker_day = row["applied_at"][:10]
+        impact = _action_impact(marker_day, day_map, start_date=start_date, end_date=end_date)
+        # Confounded when another applied action within this same loaded
+        # window lands within `window_days` of this one -- a deliberate
+        # simplification (only markers inside [start_date, end_date] are
+        # considered), not a rigorous causal analysis.
+        impact.confounded = any(
+            j != i and abs((marker_dates[i] - marker_dates[j]).days) < impact.window_days
+            for j in range(len(marker_dates))
+        )
+        markers.append(CoachActionMarker(
             kind=row["kind"],
             key=row["key"],
             label=row["label"],
             applied_at=row["applied_at"],
-            week=row["applied_at"][:10],
-        )
-        for row in rows
-    ]
+            week=marker_day,
+            impact=impact,
+        ))
+    return markers
 
 
 def apply_action(

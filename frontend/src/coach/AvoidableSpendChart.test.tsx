@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import AvoidableSpendChart from "./AvoidableSpendChart";
-import type { CoachWeek } from "../api/types";
+import type { CoachActionMarker, CoachWeek } from "../api/types";
 
 function week(partial: Partial<CoachWeek>): CoachWeek {
   return {
@@ -17,6 +17,30 @@ function week(partial: Partial<CoachWeek>): CoachWeek {
     session_count: 0,
     is_partial: false,
     partial_days: 7,
+    ...partial,
+  };
+}
+
+function marker(partial: Partial<CoachActionMarker>): CoachActionMarker {
+  return {
+    kind: "claude_md",
+    key: "some-finding",
+    label: "Add to CLAUDE.md",
+    applied_at: "2026-06-01T10:00:00Z",
+    week: "2026-06-01",
+    impact: {
+      window_days: 7,
+      before_days: 0,
+      after_days: 0,
+      sufficient_data: false,
+      before_total_usd: 0,
+      after_total_usd: 0,
+      before_avoidable_usd: 0,
+      after_avoidable_usd: 0,
+      before_avoidable_pct: 0,
+      after_avoidable_pct: 0,
+      confounded: false,
+    },
     ...partial,
   };
 }
@@ -46,10 +70,10 @@ describe("AvoidableSpendChart", () => {
     render(
       <AvoidableSpendChart
         weeks={weeks}
-        markers={[{
+        markers={[marker({
           kind: "create_agent", key: "haiku-router", label: "Create haiku-router agent",
           applied_at: "2026-06-01T10:00:00Z", week: "2026-06-01",
-        }]}
+        })]}
       />,
     );
 
@@ -62,13 +86,35 @@ describe("AvoidableSpendChart", () => {
     render(
       <AvoidableSpendChart
         weeks={weeks}
-        markers={[{
+        markers={[marker({
           kind: "claude_md", key: "some-finding", label: "Add to CLAUDE.md",
           applied_at: "2026-05-01T10:00:00Z", week: "2026-05-01",
-        }]}
+        })]}
       />,
     );
 
     expect(screen.queryByText("Add to CLAUDE.md")).not.toBeInTheDocument();
+  });
+
+  it("enriches the marker pill tooltip with before/after impact when sufficient data exists", () => {
+    const weeks = [week({ week: "2026-06-01", week_label: "1 Jun", total_usd: 10, efficient_usd: 10 })];
+    render(
+      <AvoidableSpendChart
+        weeks={weeks}
+        markers={[marker({
+          kind: "claude_md", key: "some-finding", label: "Add to CLAUDE.md",
+          applied_at: "2026-06-01T10:00:00Z", week: "2026-06-01",
+          impact: {
+            window_days: 7, before_days: 7, after_days: 7, sufficient_data: true,
+            before_total_usd: 100, after_total_usd: 100,
+            before_avoidable_usd: 20, after_avoidable_usd: 5,
+            before_avoidable_pct: 20, after_avoidable_pct: 5,
+            confounded: false,
+          },
+        })]}
+      />,
+    );
+
+    expect(screen.getByTitle("Add to CLAUDE.md — avoidable 20.0% → 5.0%")).toBeInTheDocument();
   });
 });
