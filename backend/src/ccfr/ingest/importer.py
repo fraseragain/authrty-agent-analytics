@@ -12,7 +12,6 @@ from typing import Any, Callable
 from ccfr.analysis.metrics import compute_loop_stats
 from ccfr.analysis.risk_patterns import clear_risk_pattern_tables, rebuild_risk_patterns
 from ccfr.ingest.file_ext import file_ext_from_tool_input
-from ccfr.storage.database import init_db
 
 
 PERSISTED_RE = re.compile(r"Full output saved to:\s*(?P<path>.+?)(?:\r?\n|$)")
@@ -197,7 +196,13 @@ def _prepare_conn(conn: sqlite3.Connection) -> None:
     # journal_mode=OFF setting could corrupt the whole DB on a failed import.
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA temp_store = MEMORY")
-    init_db(conn)
+    # Schema is already initialized once at app startup (main.py's lifespan) or
+    # by the caller (cli_export, tests). Re-running init_db()/migrate_db() here
+    # on every import took an unnecessary write lock -- migrate_db's backfill
+    # UPDATE runs unconditionally, and the live watcher calls this every debounce
+    # cycle during an active session, colliding with itself as "database is locked"
+    # and silently dropping every incremental import. See discover_projects() for
+    # the same fix applied earlier to the listing endpoint.
 
 
 def _create_import_row(conn: sqlite3.Connection, source_path: Path, file_count: int) -> tuple[int, ImportSummary]:
